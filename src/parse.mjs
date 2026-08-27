@@ -3,13 +3,23 @@
 // sax/fast-xml-parser 는 더 느리고 메모리만 훨씬 더 먹는다.
 import { createReadStream } from 'node:fs'
 
+// XML 엔티티를 푼다. 이 파일에는 &amp; 만 나오지만(4월 병원 10,980건,
+// 결합 52,494건) 과거 연도 파일까지 같은 파서를 쓰므로 다섯 개와 숫자
+// 참조를 전부 처리한다. 풀지 않으면 화면에 &amp; 가 그대로 찍힌다.
+const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
+const dec = (v) => v == null || v.indexOf('&') < 0 ? v
+  : v.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g,
+      (m, d, h, n) => d ? String.fromCodePoint(+d)
+                    : h ? String.fromCodePoint(parseInt(h, 16))
+                    : (NAMED[n] ?? m))
+
 const attr = (s, name) => {
   const m = new RegExp(`\\b${name}="([^"]*)"`).exec(s)
-  return m ? m[1] : null
+  return m ? dec(m[1]) : null
 }
 const tag = (s, name) => {
   const m = new RegExp(`<${name}>([^<]*)</${name}>`).exec(s)
-  return m ? m[1] : null
+  return m ? dec(m[1]) : null
 }
 
 // 커버 벡터. 서비스명은 알파벳순으로 고정돼 있으므로 값만 이어 붙인다.
@@ -55,6 +65,8 @@ function parseProduct(s) {
 
   return {
     code: attr(s, 'ProductCode'),
+    pid: attr(s, 'ProductID'),
+    iid: attr(s, 'ProductItemID'),
     schema: attr(s, 'SchemaVersion'),
     fund: tag(s, 'FundCode'),
     name: tag(s, 'Name'),

@@ -26,6 +26,22 @@ async function premiums(path) {
   return m
 }
 
+// 상품 가족. 같은 기금의 같은 상품명·주·초과금 안에서 스케일만 다른 행들.
+const fam = (r) => `${r.fund}|${r.name}|${r.state}|${r.exPerson}|${r.exAdmission}`
+
+// 보험료와 가족별 상품코드를 한 번에 훑는다. 파일이 240 MB 라 두 번 읽지 않는다.
+async function premiumsAndFamilies(path) {
+  const m = new Map(), fc = new Map()
+  await parseFile(path, r => {
+    if (r.status !== 'Open') return
+    m.set(key(r), r.premium)
+    const f = fam(r)
+    let s = fc.get(f); if (!s) fc.set(f, s = new Set())
+    s.add(r.code)
+  })
+  return { premiums: m, families: fc }
+}
+
 const T = () => { const a = [], i = new Map(); return { a, of: (v) => { if (v == null) return -1; let k = i.get(v); if (k === undefined) { k = a.length; a.push(v); i.set(v, k) } return k } } }
 
 async function main() {
@@ -36,7 +52,19 @@ async function main() {
 
   for (const kind of ['Hospital', 'Combined']) {
     const cur = await load(f('april-2026', kind, APR[2026]))
-    const mar = await premiums(f('march-2026', kind, '01-Mar-2026'))
+    const marBoth = await premiumsAndFamilies(f('march-2026', kind, '01-Mar-2026'))
+    const mar = marBoth.premiums
+
+    // 3월에 없던 상품코드가 4월에 같은 가족 안으로 들어왔다면 그 가족은 개편됐다.
+    // 매칭된 옛 코드의 상승률은 회원이 실제로 겪은 인상이 아니라 스케일 재편의
+    // 부산물일 수 있다. 숫자는 그대로 싣되 표시해 둔다.
+    const aprFam = new Map()
+    for (const r of cur.values()) { const f2 = fam(r); let s2 = aprFam.get(f2); if (!s2) aprFam.set(f2, s2 = new Set()); s2.add(r.code) }
+    const restructured = new Set()
+    for (const [f2, ac] of aprFam) {
+      const oc = marBoth.families.get(f2)
+      if (oc && [...ac].some(c => !oc.has(c))) restructured.add(f2)
+    }
     const hist = {}
     for (const y of YEARS.slice(0, -1)) hist[y] = await premiums(f(`april-${y}`, kind, APR[y]))
 
@@ -56,6 +84,7 @@ async function main() {
         r.corporate ? 1 : 0, r.restricted ? 1 : 0, corpText.of(r.corporateText),
         urls.of(r.url), r.copay, r.accom, r.knownGap ? 1 : 0, r.ambulance,
         waivers.of(r.waivers.join(',')), waits.of(JSON.stringify(r.waits)),
+        restructured.has(fam(r)) ? 1 : 0,
       ])
     }
     const band = (lo, hi) => deltas.filter(x => x.d >= lo && x.d < hi).length
@@ -66,8 +95,9 @@ async function main() {
       median: Math.round(median(deltas.map(x => x.d)) * 100) / 100,
       bands: [deltas.filter(x => x.d < 0).length, band(0, 5), band(5, 10), band(10, 15), band(15, 20), deltas.filter(x => x.d >= 20).length],
       byTier: Object.fromEntries(Object.entries(byTier).map(([t, v]) => [t, [Math.round(median(v) * 100) / 100, v.length]])),
+      restructured: [...cur.values()].filter(r => restructured.has(fam(r)) && Number.isFinite(mar.get(key(r)))).length,
     }
-    console.log(`${kind}: ${cur.size} open, ${deltas.length} priced both months, median ${stats[kind.toLowerCase()].median}%`)
+    console.log(`${kind}: ${cur.size} open, ${deltas.length} priced both months, median ${stats[kind.toLowerCase()].median}%, 개편가족 ${restructured.size} → 상품 ${stats[kind.toLowerCase()].restructured}`)
   }
 
   const out = {

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 const D = JSON.parse(readFileSync('site/index.json', 'utf8'))
 const F = { fund:0, name:1, state:2, who:3, exP:4, exA:5, tier:6, cover:7, type:8,
             prem:9, premH:10, pct:11, before:12, hist:13, corp:14, restr:15, corpTxt:16,
-            url:17, copay:18, accom:19, gap:20, amb:21, waiv:22, waits:23 }
+            url:17, copay:18, accom:19, gap:20, amb:21, waiv:22, waits:23, restruct:24 }
 
 // 1. 열 개수가 F 와 맞는다
 const width = Math.max(...Object.values(F)) + 1
@@ -16,6 +16,17 @@ assert.equal(D.stats.hospital.open, 30563)
 assert.equal(D.stats.hospital.priced, 29702)
 assert.equal(D.stats.hospital.median, 4.15)
 assert.deepEqual(D.stats.hospital.bands, [524, 17538, 9515, 1352, 177, 596])
+// 개편 플래그: 4월에 같은 가족 안으로 새 코드가 들어온 상품
+assert.equal(D.stats.hospital.restructured, 728)
+assert.equal(D.stats.combined.restructured, 2862)
+{
+  const flagged = D.products.filter(p => p[F.restruct] === 1 && p[F.pct] != null)
+  assert.equal(flagged.length, 728 + 2862, '플래그된 행 수')
+  // 플래그 없는 쪽 중앙값은 전체 중앙값과 같아야 한다 — 개편이 헤드라인을 흔들지 않는다
+  const med = a => { const s2=[...a].sort((x,y)=>x-y); const i=s2.length>>1; return s2.length%2?s2[i]:(s2[i-1]+s2[i])/2 }
+  const clean = D.products.filter(p => p[F.type]===0 && p[F.pct]!=null && !p[F.restruct]).map(p=>p[F.pct])
+  assert.ok(Math.abs(med(clean) - D.stats.hospital.median) < 0.01, '개편 제외 중앙값')
+}
 assert.equal(D.products.length, 55678)
 
 // 3. before → prem 이 pct 와 일치한다 (역산이 아니라 실제 값이어야 한다)
