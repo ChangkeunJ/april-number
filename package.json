@@ -1,0 +1,15 @@
+{
+  "name": "april-number",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "fetch": "node src/fetch.mjs",
+    "build": "node --max-old-space-size=6000 src/build.mjs",
+    "test": "node --max-old-space-size=4000 src/test.mjs",
+    "check": "node src/check.mjs",
+    "serve": "python3 -m http.server 8080 --directory site"
+  },
+  "engines": { "node": ">=20" }
+}
