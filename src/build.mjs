@@ -26,21 +26,8 @@ async function premiums(path) {
   return m
 }
 
-// 상품 가족. 같은 기금의 같은 상품명·주·초과금 안에서 스케일만 다른 행들.
-const fam = (r) => `${r.fund}|${r.name}|${r.state}|${r.exPerson}|${r.exAdmission}`
-
-// 보험료와 가족별 상품코드를 한 번에 훑는다. 파일이 240 MB 라 두 번 읽지 않는다.
-async function premiumsAndFamilies(path) {
-  const m = new Map(), fc = new Map()
-  await parseFile(path, r => {
-    if (r.status !== 'Open') return
-    m.set(key(r), r.premium)
-    const f = fam(r)
-    let s = fc.get(f); if (!s) fc.set(f, s = new Set())
-    s.add(r.code)
-  })
-  return { premiums: m, families: fc }
-}
+// 형제. 같은 상품 안에서 '누가 커버되는지' 만 다른 행들.
+const sib = (r) => `${r.fund}|${r.name}|${r.state}|${r.exPerson}|${r.exAdmission}|${r.tier}|${r.cover}`
 
 const T = () => { const a = [], i = new Map(); return { a, of: (v) => { if (v == null) return -1; let k = i.get(v); if (k === undefined) { k = a.length; a.push(v); i.set(v, k) } return k } } }
 
@@ -52,27 +39,37 @@ async function main() {
 
   for (const kind of ['Hospital', 'Combined']) {
     const cur = await load(f('april-2026', kind, APR[2026]))
-    const marBoth = await premiumsAndFamilies(f('march-2026', kind, '01-Mar-2026'))
-    const mar = marBoth.premiums
+    const mar = await premiums(f('march-2026', kind, '01-Mar-2026'))
 
-    // 3월에 없던 상품코드가 4월에 같은 가족 안으로 들어왔다면 그 가족은 개편됐다.
-    // 매칭된 옛 코드의 상승률은 회원이 실제로 겪은 인상이 아니라 스케일 재편의
-    // 부산물일 수 있다. 숫자는 그대로 싣되 표시해 둔다.
-    const aprFam = new Map()
-    for (const r of cur.values()) { const f2 = fam(r); let s2 = aprFam.get(f2); if (!s2) aprFam.set(f2, s2 = new Set()); s2.add(r.code) }
-    const restructured = new Set()
-    for (const [f2, ac] of aprFam) {
-      const oc = marBoth.families.get(f2)
-      if (oc && [...ac].some(c => !oc.has(c))) restructured.add(f2)
+    // 3월엔 내 스케일과 값이 같았는데 4월에 더 싸진 형제가 있는가. 있다면
+    // 그 기금이 부양가족 종류별로 값을 나누기 시작했다는 뜻이고, 독자가
+    // 자기 기금에 물어볼 수 있는 사실이다. 추측이 아니라 파일에 있는 값이다.
+    const sibs = new Map()
+    for (const r of cur.values()) { const k2 = sib(r); let a2 = sibs.get(k2); if (!a2) sibs.set(k2, a2 = []); a2.push(r) }
+    const cheaperSibling = (r) => {
+      const mine = mar.get(key(r))
+      if (!Number.isFinite(mine)) return null
+      let best = null
+      for (const x of sibs.get(sib(r))) {
+        if (x.who === r.who || !(x.premium < r.premium)) continue
+        if (mar.get(key(x)) !== mine) continue
+        if (!best || x.premium < best.premium) best = x
+      }
+      return best
     }
     const hist = {}
     for (const y of YEARS.slice(0, -1)) hist[y] = await premiums(f(`april-${y}`, kind, APR[y]))
 
     const deltas = []
+    let split = 0
     for (const [k, r] of cur) {
       const before = mar.get(k)
       const d = (Number.isFinite(before) && before > 0 && Number.isFinite(r.premium)) ? pct(before, r.premium) : null
       if (d !== null) deltas.push({ d, tier: r.tier })
+      const sb = d === null ? null : cheaperSibling(r)
+      const sibWho = sb ? whos.of(sb.who) : -1
+      const sibPrem = sb ? sb.premium : null
+      if (sb) split++
       products.push([
         r.fund, names.of(r.name), r.state, whos.of(r.who), r.exPerson, r.exAdmission,
         r.tier, covers.of(r.cover), kind === 'Hospital' ? 0 : 1,
@@ -84,7 +81,7 @@ async function main() {
         r.corporate ? 1 : 0, r.restricted ? 1 : 0, corpText.of(r.corporateText),
         urls.of(r.url), r.copay, r.accom, r.knownGap ? 1 : 0, r.ambulance,
         waivers.of(r.waivers.join(',')), waits.of(JSON.stringify(r.waits)),
-        restructured.has(fam(r)) ? 1 : 0,
+        sibWho, sibPrem,
       ])
     }
     const band = (lo, hi) => deltas.filter(x => x.d >= lo && x.d < hi).length
@@ -95,9 +92,9 @@ async function main() {
       median: Math.round(median(deltas.map(x => x.d)) * 100) / 100,
       bands: [deltas.filter(x => x.d < 0).length, band(0, 5), band(5, 10), band(10, 15), band(15, 20), deltas.filter(x => x.d >= 20).length],
       byTier: Object.fromEntries(Object.entries(byTier).map(([t, v]) => [t, [Math.round(median(v) * 100) / 100, v.length]])),
-      restructured: [...cur.values()].filter(r => restructured.has(fam(r)) && Number.isFinite(mar.get(key(r)))).length,
+      split,
     }
-    console.log(`${kind}: ${cur.size} open, ${deltas.length} priced both months, median ${stats[kind.toLowerCase()].median}%, 개편가족 ${restructured.size} → 상품 ${stats[kind.toLowerCase()].restructured}`)
+    console.log(`${kind}: ${cur.size} open, ${deltas.length} priced both months, median ${stats[kind.toLowerCase()].median}%, 형제 갈라짐 ${split}`)
   }
 
   const out = {

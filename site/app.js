@@ -1,7 +1,7 @@
 // 열 순서는 src/build.mjs 와 함께 움직인다.
 const F = { fund:0, name:1, state:2, who:3, exP:4, exA:5, tier:6, cover:7, type:8,
             prem:9, premH:10, pct:11, before:12, hist:13, corp:14, restr:15, corpTxt:16,
-            url:17, copay:18, accom:19, gap:20, amb:21, waiv:22, waits:23, restruct:24 }
+            url:17, copay:18, accom:19, gap:20, amb:21, waiv:22, waits:23, sibWho:24, sibPrem:25 }
 
 let D = null
 const $ = (id) => document.getElementById(id)
@@ -153,9 +153,8 @@ function render(p) {
   const d = p[F.pct]
   const kind = p[F.type] === 0 ? 'hospital' : 'combined hospital and extras'
   const corp = p[F.corp] ? `<div class="note">${esc(D.s.corpText[p[F.corpTxt]] || 'This product is only available through an employer or organisation.')}</div>` : ''
-  // 같은 상품 가족에 4월 들어 새 코드가 생긴 경우. 스케일 재편이면 이 퍼센트는
-  // 회원이 실제로 겪은 인상이 아닐 수 있다. 숫자는 그대로 두고 사실만 덧붙인다.
-  const restruct = (p[F.restruct] && d != null) ? `<div class="note warn">On 1 April this fund also listed product codes that were not in the March file under this same product name, state and excess. When a fund splits or merges the scales it sells, an old code's listed premium can move a long way while members are moved onto one of the new codes. This percentage is what the file records for this code. Check your own April letter before treating it as your increase.</div>` : ''
+  // 3월엔 같은 값이던 형제 스케일이 4월엔 더 싸다. 추측이 아니라 파일에 있는 값이다.
+  const split = (p[F.sibWho] >= 0 && p[F.sibPrem] != null) ? `<div class="note warn">In the 1 March file, the version of this policy covering <strong>${esc(whoLabel(D.s.whos[p[F.sibWho]]))}</strong> cost exactly the same as yours. On 1 April it costs <strong>${money(p[F.sibPrem])}</strong> — ${money(p[F.prem] - p[F.sibPrem])} a month less than yours. This fund has started charging separately for who a policy covers. If the cheaper version covers everyone you actually cover, that is worth asking your fund about.</div>` : ''
 
   const number = d == null
     ? `<p class="big">No April change</p><p class="sub">This product code does not appear in the 1 March 2026 file, so there is no before-price to compare. It was new, renamed, or re-coded.</p>`
@@ -167,7 +166,7 @@ function render(p) {
   out.innerHTML = `
     <section style="border:0;padding-top:0;margin-top:24px">
       <h2>${esc(D.s.names[p[F.name]])} · ${esc(p[F.state] === 'ALL' ? 'all states' : p[F.state])} · ${esc(variantLabel(p))}</h2>
-      ${number}${corp}${restruct}
+      ${number}${corp}${split}
     </section>
     <section><h2>Listed premium each April</h2>${sparkline(p[F.hist], D.meta.years)}</section>
     <section><h2>Where this sits among ${st.priced.toLocaleString()} ${kind} products</h2>
@@ -179,7 +178,11 @@ function render(p) {
 
 function fromHash() {
   if (!location.hash) return
-  const [fund, name, state, variant] = decodeURIComponent(location.hash.slice(1)).split('~')
+  // 잘못된 퍼센트 인코딩(#% 등)이면 decodeURIComponent 가 던진다. 링크 하나 때문에
+  // 페이지 전체가 죽으면 안 되므로 조용히 무시하고 빈 폼으로 시작한다.
+  let raw
+  try { raw = decodeURIComponent(location.hash.slice(1)) } catch { return }
+  const [fund, name, state, variant] = raw.split('~')
   if (!fund) return
   $('fund').value = fund; refreshName()
   $('name').value = name; refreshState()

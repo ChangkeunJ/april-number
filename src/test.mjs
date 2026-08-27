@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 const D = JSON.parse(readFileSync('site/index.json', 'utf8'))
 const F = { fund:0, name:1, state:2, who:3, exP:4, exA:5, tier:6, cover:7, type:8,
             prem:9, premH:10, pct:11, before:12, hist:13, corp:14, restr:15, corpTxt:16,
-            url:17, copay:18, accom:19, gap:20, amb:21, waiv:22, waits:23, restruct:24 }
+            url:17, copay:18, accom:19, gap:20, amb:21, waiv:22, waits:23, sibWho:24, sibPrem:25 }
 
 // 1. 열 개수가 F 와 맞는다
 const width = Math.max(...Object.values(F)) + 1
@@ -16,16 +16,16 @@ assert.equal(D.stats.hospital.open, 30563)
 assert.equal(D.stats.hospital.priced, 29702)
 assert.equal(D.stats.hospital.median, 4.15)
 assert.deepEqual(D.stats.hospital.bands, [524, 17538, 9515, 1352, 177, 596])
-// 개편 플래그: 4월에 같은 가족 안으로 새 코드가 들어온 상품
-assert.equal(D.stats.hospital.restructured, 728)
-assert.equal(D.stats.combined.restructured, 2862)
+// 형제 갈라짐: 3월엔 동가였는데 4월엔 더 싼 스케일이 같은 상품 안에 있다
+assert.equal(D.stats.hospital.split, 499)
 {
-  const flagged = D.products.filter(p => p[F.restruct] === 1 && p[F.pct] != null)
-  assert.equal(flagged.length, 728 + 2862, '플래그된 행 수')
-  // 플래그 없는 쪽 중앙값은 전체 중앙값과 같아야 한다 — 개편이 헤드라인을 흔들지 않는다
-  const med = a => { const s2=[...a].sort((x,y)=>x-y); const i=s2.length>>1; return s2.length%2?s2[i]:(s2[i-1]+s2[i])/2 }
-  const clean = D.products.filter(p => p[F.type]===0 && p[F.pct]!=null && !p[F.restruct]).map(p=>p[F.pct])
-  assert.ok(Math.abs(med(clean) - D.stats.hospital.median) < 0.01, '개편 제외 중앙값')
+  const flagged = D.products.filter(p => p[F.sibWho] >= 0)
+  assert.equal(flagged.length, D.stats.hospital.split + D.stats.combined.split, '플래그된 행 수')
+  for (const p of flagged) {
+    assert.ok(p[F.pct] != null, '갈라짐 표시는 상승률이 있는 행에만')
+    assert.ok(p[F.sibPrem] < p[F.prem], '형제가 더 싸야 한다')
+    assert.ok(D.s.whos[p[F.sibWho]] !== D.s.whos[p[F.who]], '형제는 다른 스케일이어야 한다')
+  }
 }
 assert.equal(D.products.length, 55678)
 
