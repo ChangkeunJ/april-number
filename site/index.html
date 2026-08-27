@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your April Number — what your own health policy rose, not the average</title>
+<title>Your April Number — what your own policy's listed price did, not the average</title>
 <meta name="description" content="The percentage your specific hospital policy rose on 1 April 2026, computed from the Private Health Insurance Ombudsman's own monthly data files.">
 <style>
 :root{
@@ -67,9 +67,10 @@ footer a{color:var(--ink2)}
 </head>
 <body>
 <div class="wrap">
-  <span class="tag">Private Health Insurance Ombudsman data · 1 April 2026</span>
+  <span class="tag">Built from Private Health Insurance Ombudsman data · 1 April 2026 · not a government site</span>
   <h1>Your April number</h1>
-  <p class="dek">Health funds announce an industry average. Almost nobody pays the average. This works out what <em>your</em> policy did, from the government's own monthly files.</p>
+  <p class="dek">Health funds announce one industry average. Individual products moved by anything from a fall to more than 20%. This works out what the government's own monthly files record for <em>your</em> policy.</p>
+  <p class="sub" style="margin-top:10px">The listed price of your policy, before rebate and before any discount or loading.</p>
 
   <form id="pick">
     <div><label for="fund">Health fund</label><select id="fund"><option value="">Loading…</option></select></div>
@@ -81,9 +82,10 @@ footer a{color:var(--ink2)}
   <div id="out"></div>
 
   <footer>
-    <p>Built from <a href="https://data.gov.au/dataset/8ab10b1f-6eac-423c-abc5-bbffc31b216c">PrivateHealth.gov.au</a>, published by the Private Health Insurance Ombudsman under <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a>. Snapshots of <span id="snapbefore"></span> and <span id="snapafter"></span>. Not affiliated with, or endorsed by, the Ombudsman, any health fund, or the Commonwealth.</p>
-    <p>Every premium here is the <strong>listed premium before rebate</strong> as published in that file. It is not what anyone pays: it excludes the Australian Government Rebate, your payment frequency, direct-debit discounts, any age-based discount and any Lifetime Health Cover loading. None of those are in the data.</p>
-    <p>This page reports what the files say. It does not tell you what to buy. <a id="src" href="https://github.com/ChangkeunJ/april-number">Method and source code</a>.</p>
+    <p>Built from <a href="https://data.gov.au/data/dataset/8ab10b1f-6eac-423c-abc5-bbffc31b216c">PrivateHealth.gov.au</a>, published by the Private Health Insurance Ombudsman (Commonwealth Ombudsman) under <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a>. Snapshots of <span id="snapbefore"></span> and <span id="snapafter"></span>, joined here and converted into percentage changes; the source data itself is unaltered. Not a government website. Not affiliated with, or endorsed by, the Ombudsman, any health fund, or the Commonwealth.</p>
+    <p>Every premium here is the <strong>listed premium before rebate</strong> as published in that file. It is not what anyone pays: it excludes the Australian Government Rebate, your payment frequency, direct-debit discounts, any age-based discount and any Lifetime Health Cover loading. None of those adjustments are applied to the figures here — the file records only whether an age-based discount is available on a product, never the amount, and carries no rebate, frequency or loading figures at all. The <a href="https://privatehealth.gov.au/health_insurance/surcharges_incentives/insurance_rebate.htm">rebate percentage also fell on 1 April 2026</a>, from 24.288% to 24.118% at the base tier under 65, so if you take the rebate off your premium the amount actually charged rose by a little more than the figure shown.</p>
+    <p>Policies closed to new members are not in this data at all. If you cannot find your policy here, that is the most likely reason.</p>
+    <p>This page reports what the files say. It does not tell you what to buy.</p>
   </footer>
 </div>
 <script src="app.js"></script>

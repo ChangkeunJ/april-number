@@ -26,6 +26,10 @@ async function premiums(path) {
   return m
 }
 
+// privatehealth.gov.au/footer/restricted_insurers.htm — 가입 자격이 있어야 드는 아홉 곳.
+// 상품 단위 Corporate/OnlyAvailableWith 와 별개다. site/app.js 의 같은 집합과 함께 움직인다.
+const RESTRICTED = new Set(['ACA', 'CBH', 'AHB', 'AMA', 'NHB', 'SPE', 'RBH', 'NTF', 'QTU'])
+
 // 형제. 같은 상품 안에서 '누가 커버되는지' 만 다른 행들.
 const sib = (r) => `${r.fund}|${r.name}|${r.state}|${r.exPerson}|${r.exAdmission}|${r.tier}|${r.cover}`
 
@@ -65,7 +69,7 @@ async function main() {
     for (const [k, r] of cur) {
       const before = mar.get(k)
       const d = (Number.isFinite(before) && before > 0 && Number.isFinite(r.premium)) ? pct(before, r.premium) : null
-      if (d !== null) deltas.push({ d, tier: r.tier })
+      if (d !== null) deltas.push({ d, tier: r.tier, retail: !r.corporate && !r.restricted && !RESTRICTED.has(r.fund), fund: r.fund })
       const sb = d === null ? null : cheaperSibling(r)
       const sibWho = sb ? whos.of(sb.who) : -1
       const sibPrem = sb ? sb.premium : null
@@ -73,7 +77,7 @@ async function main() {
       products.push([
         r.fund, names.of(r.name), r.state, whos.of(r.who), r.exPerson, r.exAdmission,
         r.tier, covers.of(r.cover), kind === 'Hospital' ? 0 : 1,
-        r.premium, r.premiumHospital,
+        r.premium,
         d === null ? null : Math.round(d * 100) / 100,
         // 반올림된 퍼센트에서 역산하면 몇 센트가 틀린다. 3월 값을 그대로 싣는다.
         Number.isFinite(before) ? before : null,
@@ -85,6 +89,7 @@ async function main() {
       ])
     }
     const band = (lo, hi) => deltas.filter(x => x.d >= lo && x.d < hi).length
+    const retail = deltas.filter(x => x.retail)
     const byTier = {}
     for (const x of deltas) (byTier[x.tier] ??= []).push(x.d)
     stats[kind.toLowerCase()] = {
@@ -92,6 +97,18 @@ async function main() {
       median: Math.round(median(deltas.map(x => x.d)) * 100) / 100,
       bands: [deltas.filter(x => x.d < 0).length, band(0, 5), band(5, 10), band(10, 15), band(15, 20), deltas.filter(x => x.d >= 20).length],
       byTier: Object.fromEntries(Object.entries(byTier).map(([t, v]) => [t, [Math.round(median(v) * 100) / 100, v.length]])),
+      // 법인 전용·가입조건부를 뺀, 누구나 살 수 있는 상품만의 모집단.
+      // 대안 표에서 빼는 상품을 분포에는 넣어 두면 앞뒤가 안 맞는다.
+      pricedRetail: retail.length,
+      medianRetail: Math.round(median(retail.map(x => x.d)) * 100) / 100,
+      zero: deltas.filter(x => x.d === 0).length,
+      // 최상단 밴드가 한 기금에 몰려 있으면 그 사실을 말한다.
+      topBand: (() => {
+        const hi = deltas.filter(x => x.d >= 20)
+        const by = {}; for (const x of hi) by[x.fund] = (by[x.fund] || 0) + 1
+        const [fund, n] = Object.entries(by).sort((a, b) => b[1] - a[1])[0] ?? []
+        return fund ? { fund, n, total: hi.length } : null
+      })(),
       split,
     }
     console.log(`${kind}: ${cur.size} open, ${deltas.length} priced both months, median ${stats[kind.toLowerCase()].median}%, 형제 갈라짐 ${split}`)
@@ -101,7 +118,7 @@ async function main() {
     meta: {
       built: new Date().toISOString().slice(0, 10),
       rateRise: '2026-04-01', announcedAverage: ANNOUNCED, years: YEARS,
-      source: 'https://data.gov.au/dataset/8ab10b1f-6eac-423c-abc5-bbffc31b216c',
+      source: 'https://data.gov.au/data/dataset/8ab10b1f-6eac-423c-abc5-bbffc31b216c',
       publisher: 'Private Health Insurance Ombudsman', licence: 'CC BY 3.0 AU',
       snapshots: { before: '2026-03-01', after: '2026-04-05' },
     },

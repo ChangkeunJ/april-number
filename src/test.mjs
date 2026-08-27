@@ -4,8 +4,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 const D = JSON.parse(readFileSync('site/index.json', 'utf8'))
 const F = { fund:0, name:1, state:2, who:3, exP:4, exA:5, tier:6, cover:7, type:8,
-            prem:9, premH:10, pct:11, before:12, hist:13, corp:14, restr:15, corpTxt:16,
-            url:17, copay:18, accom:19, gap:20, amb:21, waiv:22, waits:23, sibWho:24, sibPrem:25 }
+            prem:9, pct:10, before:11, hist:12, corp:13, restr:14, corpTxt:15,
+            url:16, copay:17, accom:18, gap:19, amb:20, waiv:21, waits:22, sibWho:23, sibPrem:24 }
 
 // 1. 열 개수가 F 와 맞는다
 const width = Math.max(...Object.values(F)) + 1
@@ -18,6 +18,19 @@ assert.equal(D.stats.hospital.median, 4.15)
 assert.deepEqual(D.stats.hospital.bands, [524, 17538, 9515, 1352, 177, 596])
 // 형제 갈라짐: 3월엔 동가였는데 4월엔 더 싼 스케일이 같은 상품 안에 있다
 assert.equal(D.stats.hospital.split, 499)
+// 소매 모집단과 변동 없음 집계 — 화면 문장이 그대로 쓰는 숫자들
+assert.equal(D.stats.hospital.pricedRetail, 14574)
+assert.equal(D.stats.hospital.medianRetail, 3.54)
+assert.equal(D.stats.hospital.zero, 2392)
+assert.deepEqual(D.stats.hospital.topBand, { fund: 'MYO', n: 526, total: 596 })
+// 변동 없음 분기는 반올림이 아니라 실제 값으로 갈린다
+assert.equal(D.products.filter(p => p[F.pct] != null && p[F.before] === p[F.prem]).length,
+  D.stats.hospital.zero + D.stats.combined.zero, '값 동일 행 수')
+// 가입 제한 보험사는 대안 표 모집단에서 빠진다
+{
+  const R = new Set(['ACA','CBH','AHB','AMA','NHB','SPE','RBH','NTF','QTU'])
+  for (const c of R) assert.ok(D.funds[c], `제한 보험사 코드 ${c} 가 데이터에 없다`)
+}
 {
   const flagged = D.products.filter(p => p[F.sibWho] >= 0)
   assert.equal(flagged.length, D.stats.hospital.split + D.stats.combined.split, '플래그된 행 수')
