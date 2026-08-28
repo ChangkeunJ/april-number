@@ -59,5 +59,20 @@ for (const p of sample) { els.out.innerHTML = ''; ctx.render(p); if (banned.test
 console.log(`  금지어: 300건 중 ${hits}건`)
 if (hits) bad++
 
+// picker: 화면상 다른 행이 라벨 충돌로 숨으면 안 된다 (2026-08-28 에 1,108건이 숨어 있었다)
+for (const id of ['fund', 'name', 'state', 'variant']) el(id)
+const g = new Map()
+for (const p of D.products) { const k = [p[F.fund], p[F.name], p[F.state]].join('|'); (g.get(k) ?? g.set(k, []).get(k)).push(p) }
+const vis = (a, b) => [F.who, F.exP, F.exA, F.prem, F.pct].every(i => a[i] === b[i]) && JSON.stringify(a[F.hist]) === JSON.stringify(b[F.hist])
+let hidden = 0
+for (const rows of g.values()) {
+  els.fund.value = rows[0][F.fund]; els.name.value = String(rows[0][F.name]); els.state.value = rows[0][F.state]
+  ctx.refreshVariant()
+  const shown = [...ctx.window.__variants.values()]
+  for (const p of rows) if (!shown.some(q => vis(q, p))) hidden++
+}
+console.log(`  picker: 화면상 다른데 숨는 행 ${hidden}`)
+if (hidden) bad++
+
 console.log(bad ? `\n실패 ${bad}건` : '\nOK — 모든 분기 렌더 정상')
 process.exit(bad ? 1 : 0)

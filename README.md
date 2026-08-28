@@ -29,8 +29,9 @@ rotates whenever a fund edits a product, so anything keyed on it gets no history
 
 That key is verified against the publisher's own record rather than assumed. Each ZIP
 ships a `Product Changes` CSV carrying `ProductID` and `OLD_ProductID`, which chains
-each product to its previous version, and there is a per-version `ProductItemID` on
-every row. Following that chain (`src/idjoin.mjs`) reproduces the same 29,702 matches
+each product to its previous version, and every row also carries a `ProductItemID`
+that stays fixed across versions (29,702 matched hospital rows share it between March
+and April, against 259 sharing a `ProductID`). Following that chain (`src/idjoin.mjs`) reproduces the same 29,702 matches
 and the same 4.1534% median, and selects the same March row as the key above for every
 single product.
 
@@ -42,8 +43,8 @@ Premiums do not move between April rate rises. Comparing August 2026 against Apr
 2026 gives 29,268 common products and exactly zero price changes. So the history line
 uses April snapshots only, five of them, back to 2022 — the first April rate rise for
 which every product uses the `WhoIsCovered` element, per the dataset's ReadMe. 49.0% of
-currently open products
-have all five points; 87.6% have at least 2025 and 2026. Where a point is missing the
+currently open hospital products have all five points; 87.6% have at least 2025 and
+2026 (combined: 31.2% and 70.3%). Where a point is missing the
 chart says so per product rather than drawing a shorter line.
 
 ## What it will not tell you
@@ -67,9 +68,10 @@ between funds and are not in the product file at all.
 **It excludes products you cannot buy.** 11,629 of 30,563 open hospital products carry
 `Corporate IsCorporate="true"` and a further 2,380 carry a non-`NotApplicable`
 `OnlyAvailableWith`. Separately, nine insurers are restricted — you must be eligible to
-join them — and that is a licensee-level fact the product file does not record at all,
-so it is carried as a hardcoded set of nine fund codes taken from
-[privatehealth.gov.au](https://privatehealth.gov.au/footer/restricted_insurers.htm).
+join them. The product file does not record that, but the Funds file in the same ZIP
+does (`<FundType>Restricted</FundType>`, the same nine codes), and the build carries
+them as a hardcoded set of nine fund codes matching
+[privatehealth.gov.au](https://privatehealth.gov.au/dynamic/insurer/restricted).
 All three are filtered out of every alternatives list. Leaving them in puts an
 employer-only or members-only product at the top of a list sorted by price.
 

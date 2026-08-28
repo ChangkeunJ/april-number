@@ -1,6 +1,6 @@
 // ProductID 기반 조인 검증. 파일 안에 정부가 만든 정체성 필드가 있다.
-//   ProductID     상품 정체성 (개정돼도 유지되는가?)
-//   ProductItemID 이번 판 정체성
+//   ProductID     이번 판 정체성 (판마다 새 GUID — 259건만 3월과 같다)
+//   ProductItemID 상품 정체성 (개정돼도 유지 — 29,702건이 3·4월 공유)
 //   Product Changes CSV 의 OLD_ProductID 가 이전 판을 가리킨다.
 import { readFileSync } from 'node:fs'
 import { parseFile } from './parse.mjs'

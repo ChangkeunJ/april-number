@@ -3,7 +3,7 @@ const F = { fund:0, name:1, state:2, who:3, exP:4, exA:5, tier:6, cover:7, type:
             prem:9, pct:10, before:11, hist:12, corp:13, restr:14, corpTxt:15,
             url:16, copay:17, accom:18, gap:19, amb:20, waiv:21, waits:22, sibWho:23, sibPrem:24 }
 
-// privatehealth.gov.au/footer/restricted_insurers.htm — 가입 자격이 있어야 드는 곳들.
+// privatehealth.gov.au/dynamic/insurer/restricted — 가입 자격이 있어야 드는 곳들.
 // 상품 단위 Corporate/OnlyAvailableWith 와는 별개라 따로 걸러야 한다.
 const RESTRICTED = new Set(['ACA', 'CBH', 'AHB', 'AMA', 'NHB', 'SPE', 'RBH', 'NTF', 'QTU'])
 
@@ -61,8 +61,22 @@ function refreshState() {
 function refreshVariant() {
   const f = $('fund').value, n = Number($('name').value), st = $('state').value
   const rows = D.products.filter(p => p[F.fund] === f && p[F.name] === n && p[F.state] === st)
-  const seen = new Map()
-  for (const p of rows) { const k = variantLabel(p); if (!seen.has(k)) seen.set(k, p) }
+  // 같은 라벨(가구·본인부담금)로 두 상품코드가 올라온 묶음이 534개 있다. 가격이 다르면
+  // 가격으로, 가격까지 같고 이력만 다르면(92건) 번호로 구분한다. 화면이 완전히 같은 972건은 접는다.
+  const cnt = (f) => { const m = new Map(); for (const p of rows) { const k = f(p); m.set(k, (m.get(k) ?? 0) + 1) }; return m }
+  const byLabel = cnt(variantLabel), byPrice = cnt(p => variantLabel(p) + p[F.prem])
+  const seen = new Map(), nth = new Map()
+  for (const p of rows) {
+    const k = variantLabel(p), kp = k + p[F.prem]
+    let label = byLabel.get(k) > 1 ? `${k} — listed at ${money(p[F.prem])}` : k
+    if (byPrice.get(kp) > 1) {
+      const same = [...seen.values()].find(q => variantLabel(q) + q[F.prem] === kp && JSON.stringify(q[F.hist]) === JSON.stringify(p[F.hist]))
+      if (same) continue
+      const n = (nth.get(kp) ?? 0) + 1; nth.set(kp, n)
+      if (n > 1) label += ` (listing ${n})`
+    }
+    seen.set(label, p)
+  }
   const opts = [...seen.keys()].sort().map(k => [k, k])
   fill($('variant'), opts, 'Choose your cover')
   window.__variants = seen
@@ -99,7 +113,7 @@ function sparkline(hist, years) {
   }
   const missing = years.filter((_, i) => hist[i] == null)
   const note = missing.length
-    ? `<p class="miss">No April ${missing.join(', ')} snapshot carries this product code — the fund had not listed it under this code yet, renamed it, or changed the excess on it. The line skips those years rather than guessing.</p>` : ''
+    ? `<p class="miss">The April ${missing.join(', ')} open-products file has no row for this product code with this state, household and excess. The line skips those years rather than guessing why.</p>` : ''
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Listed premium before rebate, each April">${seg}${dots}${labs}</svg>${note}`
 }
 
@@ -133,7 +147,7 @@ function sameCover(p) {
     q[F.who] === p[F.who] && q[F.exP] === p[F.exP] && q[F.exA] === p[F.exA] &&
     q[F.type] === p[F.type] && !q[F.corp] && !q[F.restr] && !RESTRICTED.has(q[F.fund]))
     .sort((a, b) => a[F.prem] - b[F.prem])
-  if (!rows.length) return `<p class="sub">No other product open to the general public lists exactly this set of covered services at this state, household and excess. Products sold only through an employer, insurers you must be eligible to join, and policies closed to new members are not in this comparison.</p>`
+  if (!rows.length) return `<p class="sub">No other product open to the general public lists exactly this set of covered hospital services at this state, household and excess. Products sold only through an employer, products sold only together with an extras product, insurers you must be eligible to join, and policies closed to new members are not in this comparison.</p>`
   const mine = DIFFS.map(([, f]) => f(p))
   const head = `<tr><th>Fund</th><th>Policy</th><th class="n">Listed premium<br>before rebate</th>` +
     DIFFS.map(([t]) => `<th>${t}</th>`).join('') + `</tr>`
@@ -150,8 +164,8 @@ function sameCover(p) {
   return `<div class="scroll"><table>${head}<tr style="background:var(--card)"><td><strong>${esc(D.funds[p[F.fund]] ?? p[F.fund])}</strong></td>
       <td><strong>${esc(D.s.names[p[F.name]])}</strong> — yours</td><td class="n"><strong>${money(p[F.prem])}</strong></td>
       ${mine.map(v => `<td>${esc(v)}</td>`).join('')}</tr>${body}</table></div>
-    ${p[F.corp] ? `<div class="note">Your own product is sold through an employer. The products below it are retail prices and are not priced the same way.</div>` : ''}
-    <div class="note">Sorted by listed price. That is an ordering, not a recommendation — the columns to the right are where these products differ. Matching cover is not an identical policy: these products match on the government file's medical-services list, state, who is covered and excess, and nothing else. They may also use different private hospital networks, which changes what you are charged in hospital. The Ombudsman publishes each fund's agreement-hospital list in the same dataset as the prices; this page does not read it. Products sold only through an employer, insurers you must be eligible to join, and policies closed to new members are not shown.</div>`
+    ${p[F.corp] ? `<div class="note">Your own product is sold through an employer; the products below it are open to the general public.</div>` : ''}
+    <div class="note">Sorted by listed price. That is an ordering, not a recommendation — the columns to the right are where these products differ. Matching cover is not an identical policy: these products match on the government file's medical-services list, state, who is covered and excess, and nothing else.${p[F.type] === 1 ? ' For a combined policy the extras side is not compared at all: two rows here can carry entirely different extras cover.' : ''} They may also use different private hospital networks, which can change what you are charged in hospital. The Ombudsman publishes each fund's agreement-hospital list in the same dataset as the prices; this page does not read it. Products sold only through an employer, products sold only together with an extras product, insurers you must be eligible to join, and policies closed to new members are not shown.</div>`
 }
 
 function render(p) {
@@ -162,7 +176,7 @@ function render(p) {
   const kind = p[F.type] === 0 ? 'hospital' : 'combined hospital and extras'
   const corp = p[F.corp] ? `<div class="note">${esc(D.s.corpText[p[F.corpTxt]] || 'This product is only available through an employer or organisation.')}</div>` : ''
   // 3월엔 같은 값이던 형제 스케일이 4월엔 더 싸다. 추측이 아니라 파일에 있는 값이다.
-  const split = (p[F.sibWho] >= 0 && p[F.sibPrem] != null) ? `<div class="note warn">In the 1 March file, the version of this policy covering <strong>${esc(whoLabel(D.s.whos[p[F.sibWho]]))}</strong> was listed at the same premium as yours. In the 1 April file it is listed at <strong>${money(p[F.sibPrem])}</strong> a month, ${money(p[F.prem] - p[F.sibPrem])} below yours. Both rows are in the file under this policy.</div>` : ''
+  const split = (p[F.sibWho] >= 0 && p[F.sibPrem] != null) ? `<div class="note warn">In the 1 March file, the version of this policy covering <strong>${esc(whoLabel(D.s.whos[p[F.sibWho]]))}</strong> was listed at the same premium as yours. In the 5 April file it is listed at <strong>${money(p[F.sibPrem])}</strong> a month, ${money(p[F.prem] - p[F.sibPrem])} below yours. Both rows are in the file under this policy name, as separate product codes.</div>` : ''
 
   // 발표 평균과 이 숫자는 같은 것을 재지 않는다. 나란히 놓고 아무 말도 안 하면
   // 독자는 "우리 기금이 평균보다 더 올렸다" 로 읽는다. 그건 이 데이터로 말할 수 없다.
@@ -173,9 +187,9 @@ function render(p) {
   const unchanged = d != null && p[F.before] === p[F.prem]
   const number = unchanged
     ? `<p class="big">No change in the file</p>
-       <p class="sub">This product is listed at the same price in the 1 March and 5 April 2026 files: <strong>${money(p[F.prem])}</strong> a month. Some funds change prices on a date other than 1 April, or had not refiled when the April snapshot was taken. The file does not say which. Your fund notifies you of your own change in writing. The Government ${AVG}</p>`
+       <p class="sub">This product is listed at the same price in the 1 March and 5 April 2026 files: <strong>${money(p[F.prem])}</strong> a month. The file records the price, not the reason it did not move. The figure in your fund's own notice to you is the one that applies to you. The Government ${AVG}</p>`
     : d == null
-    ? `<p class="big">No April change</p><p class="sub">This product code is not in the 1 March 2026 list of policies open to new members, so there is no before-price to compare. The file does not say why.</p>`
+    ? `<p class="big">No March price to compare</p><p class="sub">This product code is not in the 1 March 2026 list of policies open to new members, so there is no before-price to compare. The publisher's change record for April lists it as added or re-coded since the March file; this page does not follow that chain.</p>`
     : `<p class="big ${d >= 0 ? 'up' : 'down'}">${pctStr(d)}</p>
        <p class="sub">Your listed premium before rebate went from <strong>${money(p[F.before])}</strong> to <strong>${money(p[F.prem])}</strong> a month on 1 April 2026.
        The Government ${AVG} The figure above is a different measure. Across the ${st.priced.toLocaleString()} ${kind} products priced in both months, the middle one moved ${st.median}%.
@@ -188,12 +202,12 @@ function render(p) {
       ${number}${corp}${split}
     </section>
     <section><h2>Listed premium each April</h2>${sparkline(p[F.hist], D.meta.years)}</section>
-    <section><h2>Where this sits among ${st.priced.toLocaleString()} ${kind} products, ${(st.priced - st.pricedRetail).toLocaleString()} of them sold only through an employer or to eligible members</h2>
+    <section><h2>Where this sits among ${st.priced.toLocaleString()} ${kind} products, ${(st.priced - st.pricedRetail).toLocaleString()} of them sold only through an employer, only together with an extras product, or only to people eligible to join a restricted insurer</h2>
       ${distribution(p, st)}
       <p class="sub" style="margin-top:12px">Across the ${st.pricedRetail.toLocaleString()} products open to the general public, the middle one moved ${st.medianRetail}%.${st.topBand && st.topBand.n / st.topBand.total > 0.5 ? ` The top band is concentrated in one insurer: ${st.topBand.n.toLocaleString()} of the ${st.topBand.total.toLocaleString()} products above 20% belong to ${esc(D.funds[st.topBand.fund] ?? st.topBand.fund)}. The Department publishes an <a href="${PERINSURER}" rel="nofollow noopener">approved average for each insurer</a>.` : ''}</p>
-      <p class="sub" style="margin-top:12px">By tier, the median April change was ${tiers.map(([t, [m, n]]) => `<strong>${t} ${pctStr(m)}</strong> (${n.toLocaleString()})`).join(', ')}. These medians count every product in the file, including those sold only through an employer.</p>
+      <p class="sub" style="margin-top:12px">By tier as classified in the 5 April 2026 file, the median April change was ${tiers.map(([t, [m, n]]) => `<strong>${t} ${pctStr(m)}</strong> (${n.toLocaleString()})`).join(', ')}. These medians count every product priced in both months, including those sold only through an employer.</p>
     </section>
-    <section><h2>Products the file records as covering the same things</h2>${sameCover(p)}</section>`
+    <section><h2>Products the file records as covering the same hospital services</h2>${sameCover(p)}</section>`
 }
 
 function fromHash() {

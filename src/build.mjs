@@ -26,7 +26,7 @@ async function premiums(path) {
   return m
 }
 
-// privatehealth.gov.au/footer/restricted_insurers.htm — 가입 자격이 있어야 드는 아홉 곳.
+// privatehealth.gov.au/dynamic/insurer/restricted — 가입 자격이 있어야 드는 아홉 곳.
 // 상품 단위 Corporate/OnlyAvailableWith 와 별개다. site/app.js 의 같은 집합과 함께 움직인다.
 const RESTRICTED = new Set(['ACA', 'CBH', 'AHB', 'AMA', 'NHB', 'SPE', 'RBH', 'NTF', 'QTU'])
 
