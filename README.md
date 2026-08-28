@@ -110,9 +110,23 @@ October 2021 resource claims 2019.
 
 ## Runtime
 
-One HTML file, one JS file, one JSON file. No framework, no build step for the site, no
+One HTML file, two JS files, one JSON file. No framework, no build step for the site, no
 network requests after the page loads, no cookies, no analytics, no accounts. Selection
-lives in the URL hash so a result is linkable. Deploys to any static host.
+lives in the URL hash as a product index so a result is linkable in any language.
+Deploys to any static host.
+
+Seven languages: English, 한국어, 中文, 日本語, Tiếng Việt, Español, Français. Picked from
+`?lang=xx`, then the saved choice, then the browser language. The UI is translated;
+product names, fund names and the eligibility wording a fund files stay in English as
+filed, and the footer says so. `site/strings.js` holds English by hand and the other
+six generated from `site/strings.<lang>.json` by `node src/i18n.mjs`. Every translation
+was reviewed for meaning drift against the English — the hedges are load-bearing under
+ACL s 18 and a translator's instinct to make a sentence firmer is exactly the failure
+mode. `src/smoke.mjs` renders every branch in every language and checks key sets,
+placeholders and HTML tags match the English.
+
+Light and dark follow the OS unless the reader picks one; the choice is saved in
+`localStorage` and applied before first paint.
 
 ## One thing the file records that nobody publishes
 

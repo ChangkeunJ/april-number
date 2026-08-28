@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Your April Number — what your own policy's listed price did, not the average</title>
 <meta name="description" content="The percentage your specific hospital policy changed on 1 April 2026, computed from the Private Health Insurance Ombudsman's own monthly data files.">
+<script>
+// 저장된 테마를 첫 그리기 전에 건다. 안 그러면 다크 사용자에게 흰 화면이 한 번 번쩍인다.
+try { var th = localStorage.getItem('theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th } catch (e) {}
+</script>
 <style>
 :root{
   --paper:#FBFAF7; --card:#FFFFFF; --ink:#1A1A18; --ink2:#55534D; --ink3:#84817A;
@@ -12,17 +16,27 @@
   --up:#8C3A24; --up-wash:#F6E9E4; --down:#2F5D46; --down-wash:#E4EEE8;
   --mark:#1A1A18;
 }
-@media (prefers-color-scheme:dark){:root{
+/* 세 상태: 저장값 없음(OS 따름) · light · dark. 토큰만 바꾸고 컴포넌트는 토큰만 본다. */
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --paper:#15161A; --card:#1D1F24; --ink:#E9E8E4; --ink2:#A6A49D; --ink3:#7C7A73;
   --rule:#2C2E34; --rule2:#3D4048;
   --up:#E09477; --up-wash:#2A1D18; --down:#7FB49A; --down-wash:#16241D;
   --mark:#E9E8E4;
 }}
+:root[data-theme="dark"]{
+  --paper:#15161A; --card:#1D1F24; --ink:#E9E8E4; --ink2:#A6A49D; --ink3:#7C7A73;
+  --rule:#2C2E34; --rule2:#3D4048;
+  --up:#E09477; --up-wash:#2A1D18; --down:#7FB49A; --down-wash:#16241D;
+  --mark:#E9E8E4;
+}
 *{box-sizing:border-box}
+html{color-scheme:light dark}
 body{margin:0;background:var(--paper);color:var(--ink);
-  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Noto Sans KR","Noto Sans JP","Noto Sans SC",sans-serif}
 .wrap{max-width:860px;margin:0 auto;padding:0 20px 80px}
-h1{font-size:clamp(28px,5vw,42px);line-height:1.1;letter-spacing:-.02em;margin:56px 0 14px;text-wrap:balance}
+.top{display:flex;justify-content:flex-end;gap:10px;padding-top:14px}
+.top select{width:auto;padding:5px 8px;font-size:13px}
+h1{font-size:clamp(28px,5vw,42px);line-height:1.1;letter-spacing:-.02em;margin:40px 0 14px;text-wrap:balance}
 .dek{font-size:18px;color:var(--ink2);max-width:60ch;margin:0}
 .tag{display:inline-block;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
   letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:18px}
@@ -50,7 +64,7 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   padding:12px 14px;border-radius:0 4px 4px 0;margin-top:14px}
 .note.warn{border-left-color:var(--up);background:var(--up-wash);color:var(--ink)}
 .bands{display:grid;gap:3px;margin:0;font-size:13px}
-.band{display:grid;grid-template-columns:88px 1fr 62px;align-items:center;gap:10px}
+.band{display:grid;grid-template-columns:minmax(88px,auto) 1fr 62px;align-items:center;gap:10px}
 .bar{height:15px;background:var(--rule);border-radius:2px}
 .band.you .bar{background:var(--mark)}
 .band.you{font-weight:700}
@@ -63,31 +77,48 @@ footer a{color:var(--ink2)}
 .miss{color:var(--ink3);font-style:italic}
 @media(min-width:620px){form{grid-template-columns:1fr 1fr}
   form>div:nth-child(1),form>div:nth-child(2){grid-column:1/-1}}
+@media(prefers-reduced-motion:no-preference){body{transition:background .2s,color .2s}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <span class="tag">Built from Private Health Insurance Ombudsman data · 1 April 2026 · not a government site</span>
-  <h1>Your April number</h1>
-  <p class="dek">The Government announces one industry average. Individual products moved by anything from a fall to more than 20%. This works out what the government's own monthly files record for <em>your</em> policy.</p>
-  <p class="sub" style="margin-top:10px">The listed price of your policy, before rebate and before any discount or loading.</p>
+  <div class="top">
+    <label for="lang" class="visually-hidden" style="position:absolute;left:-9999px" data-t="label_lang">Language</label>
+    <select id="lang"></select>
+    <label for="theme" style="position:absolute;left:-9999px" data-t="label_theme">Appearance</label>
+    <select id="theme">
+      <option value="system" id="theme-system">System</option>
+      <option value="light" id="theme-light">Light</option>
+      <option value="dark" id="theme-dark">Dark</option>
+    </select>
+  </div>
+  <span class="tag" data-t="eyebrow">Built from Private Health Insurance Ombudsman data · 1 April 2026 · not a government site</span>
+  <h1 data-t="h1">Your April number</h1>
+  <p class="dek" data-t-html="dek_html">The Government announces one industry average. Individual products moved by anything from a fall to more than 20%. This works out what the government's own monthly files record for <em>your</em> policy.</p>
+  <p class="sub" style="margin-top:10px" data-t="subdek">The listed price of your policy, before rebate and before any discount or loading.</p>
 
   <form id="pick">
-    <div><label for="fund">Health fund</label><select id="fund"><option value="">Loading…</option></select></div>
-    <div><label for="name">Policy name</label><select id="name" disabled><option value="">—</option></select></div>
-    <div><label for="state">State</label><select id="state" disabled><option value="">—</option></select></div>
-    <div><label for="variant">Who's covered, and excess</label><select id="variant" disabled><option value="">—</option></select></div>
+    <div><label for="fund" data-t="label_fund">Health fund</label><select id="fund"><option value="" data-t="ph_loading">Loading…</option></select></div>
+    <div><label for="name" data-t="label_name">Policy name</label><select id="name" disabled><option value="">—</option></select></div>
+    <div><label for="state" data-t="label_state">State</label><select id="state" disabled><option value="">—</option></select></div>
+    <div><label for="variant" data-t="label_variant">Who's covered, and excess</label><select id="variant" disabled><option value="">—</option></select></div>
   </form>
 
   <div id="out"></div>
 
   <footer>
-    <p>Built from <a href="https://data.gov.au/data/dataset/8ab10b1f-6eac-423c-abc5-bbffc31b216c">PrivateHealth.gov.au</a>, published by the Private Health Insurance Ombudsman (Commonwealth Ombudsman) under <a href="https://creativecommons.org/licenses/by/3.0/au/">CC BY 3.0 AU</a>. Snapshots of <span id="snapbefore"></span> and <span id="snapafter"></span>, joined here and converted into percentage changes; the source data itself is unaltered. Not a government website. Not affiliated with, or endorsed by, the Ombudsman, any health fund, or the Commonwealth.</p>
-    <p>Every premium here is the <strong>listed premium before rebate</strong> as published in that file. It is not what anyone pays: it excludes the Australian Government Rebate, your payment frequency, direct-debit discounts, any age-based discount and any Lifetime Health Cover loading. None of those adjustments are applied to the figures here — the file records only whether an age-based discount is available on a product, never the amount, and carries no rebate, frequency or loading figures at all. The <a href="https://privatehealth.gov.au/health_insurance/surcharges_incentives/insurance_rebate.htm">rebate percentage also fell on 1 April 2026</a>, from 24.288% to 24.118% at the base tier under 65, so if you take the rebate as a premium reduction, your change net of rebate is about 0.2 of a percentage point above the figure shown: a slightly larger rise, a slightly smaller fall, or a small rise where the listed price did not move.</p>
-    <p>Policies closed to new members are not in this data at all, and extras-only policies are not on this page. Funds appear under the insurer's registered name, not the brand you may know it by. If you cannot find your policy, one of those is usually why.</p>
-    <p>This page reports what the files say. It does not tell you what to buy.</p>
+    <p data-t-html="footer1_html"></p>
+    <p data-t-html="footer2_html"></p>
+    <p data-t="footer3"></p>
+    <p data-t="footer4"></p>
+    <p data-t="footer5"></p>
   </footer>
 </div>
+<script src="strings.js"></script>
+<script>
+// 언어 목록은 strings.js 가 정한다.
+(function () { var s = document.getElementById('lang'); for (var k in STR) { var o = document.createElement('option'); o.value = k; o.textContent = STR[k]._name; s.appendChild(o) } })()
+</script>
 <script src="app.js"></script>
 </body>
 </html>
