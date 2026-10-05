@@ -13,44 +13,66 @@ const PERINSURER = 'https://www.health.gov.au/resources/publications/average-ann
 
 let D = null
 let BY = null   // fund|name|state → [index]. picker 를 열 때마다 55,678행을 훑지 않는다.
+let VARIANTS = new Map()   // variant 옵션 값(인덱스 문자열) → 상품 행
 function indexProducts() {
   BY = new Map()
   D.products.forEach((p, i) => { const k = p[F.fund] + '|' + p[F.name] + '|' + p[F.state]; let a = BY.get(k); if (!a) BY.set(k, a = []); a.push(i) })
 }
 const $ = (id) => document.getElementById(id)
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+// 데이터나 입력값을 키로 쓰는 조회는 자기 속성만 본다. 'constructor' 같은 키가 프로토타입을 타지 않게.
+const own = (o, k) => (o != null && Object.hasOwn(o, k)) ? o[k] : undefined
+// 데이터에서 온 URL 은 http(s) 만 링크로 만든다.
+const safeHref = (u) => { try { const url = new URL(u); return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : null } catch { return null } }
 
 // ---- 언어 ----
 // 우선순위: ?lang= → 저장값 → 브라우저 언어 → en. 값이 없는 키는 영어로 떨어진다.
 let LANG = 'en'
+// 언어 코드는 두 글자 소문자이고 STR 의 자기 속성이어야 한다. 그 외의 값은 저장하지도 lang 에 쓰지도 않는다.
+const okLang = (q) => typeof q === 'string' && /^[a-z]{2}$/.test(q) && Object.hasOwn(STR, q) && typeof STR[q]?._locale === 'string'
 const t = (k, vars) => {
-  let s = (STR[LANG] && STR[LANG][k]) ?? STR.en[k]
+  let s = own(STR[LANG], k) ?? own(STR.en, k)
   if (s == null) return k
-  if (vars) for (const [a, b] of Object.entries(vars)) s = s.split(`{${a}}`).join(b)
+  // 한 번에 치환한다. 치환된 값 안의 {x} 가 다시 치환되면 안 된다.
+  if (vars && typeof s === 'string') s = s.replace(/\{(\w+)\}/g, (m, key) => Object.hasOwn(vars, key) ? String(vars[key]) : m)
   return s
 }
 // 데이터 열거값(XSD 고정값)의 표시명. 표에 없는 값은 원문 그대로.
-const tv = (prefix, v) => (STR[LANG] && STR[LANG][prefix + v]) ?? STR.en[prefix + v] ?? v
-const num = (n) => n.toLocaleString(STR[LANG]?._locale ?? 'en-AU')
-const money = (n) => n == null ? null : '$' + n.toFixed(2)
-const pctStr = (n) => (n > 0 ? '+' : '') + n.toFixed(2) + '%'
+const tv = (prefix, v) => own(STR[LANG], prefix + v) ?? own(STR.en, prefix + v) ?? v
+// 숫자 표시. 숫자가 아니거나 비어 있으면 — 로 둔다 (Number(null) 은 0 이라 따로 거른다). 화면에 NaN 이나 undefined 가 찍히면 안 된다.
+const toNum = (v) => (v == null || v === '') ? NaN : Number(v)
+const num = (n) => { n = toNum(n); return Number.isFinite(n) ? n.toLocaleString(STR[LANG]?._locale ?? 'en-AU') : '—' }
+const money = (n) => { if (n == null) return null; n = Number(n); return Number.isFinite(n) ? '$' + n.toFixed(2) : '—' }
+const pctStr = (n) => { n = toNum(n); return Number.isFinite(n) ? (n > 0 ? '+' : '') + n.toFixed(2) + '%' : '—' }
+const dec = (n) => { n = toNum(n); return Number.isFinite(n) ? String(n) : '—' }   // 중앙값·발표 평균처럼 그대로 보여 주는 소수
+const fin = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : null   // 데이터의 숫자 칸. 숫자가 아니면 없는 값으로 본다
 
+// 언어 목록은 strings.js 가 정한다. (index.html 의 인라인 스크립트였다 — CSP 때문에 여기로.)
+function fillLangs() {
+  $('lang').innerHTML = Object.keys(STR).filter(okLang).map(k => `<option value="${esc(k)}">${esc(STR[k]._name ?? k)}</option>`).join('')
+}
 function pickLang() {
   const q = new URLSearchParams(location.search).get('lang')
-  if (q && STR[q]) return q
-  try { const s = localStorage.getItem('lang'); if (s && STR[s]) return s } catch {}
-  const nav = (navigator.language || 'en').slice(0, 2)
-  return STR[nav] ? nav : 'en'
+  if (okLang(q)) return q
+  try { const s = localStorage.getItem('lang'); if (okLang(s)) return s } catch {}
+  const nav = String(navigator.language || 'en').slice(0, 2)
+  return okLang(nav) ? nav : 'en'
+}
+function showSnapshots() {
+  const s = (D && D.meta && D.meta.snapshots) || {}
+  const b = $('snapbefore'), a = $('snapafter')
+  if (b) b.textContent = String(s.before ?? '')
+  if (a) a.textContent = String(s.after ?? '')
 }
 function setLang(l) {
-  LANG = STR[l] ? l : 'en'
+  LANG = okLang(l) ? l : 'en'
   try { localStorage.setItem('lang', LANG) } catch {}
   document.documentElement.lang = STR[LANG]._locale
   document.title = t('title')
   const m = document.querySelector('meta[name="description"]'); if (m) m.content = t('meta_desc')
   for (const el of document.querySelectorAll('[data-t]')) el.textContent = t(el.dataset.t)
   for (const el of document.querySelectorAll('[data-t-html]')) el.innerHTML = t(el.dataset.tHtml)
-  if (D) { $('snapbefore').textContent = D.meta.snapshots.before; $('snapafter').textContent = D.meta.snapshots.after }
+  if (D) showSnapshots()
   for (const [id, k] of [['theme-system', 'theme_system'], ['theme-light', 'theme_light'], ['theme-dark', 'theme_dark']]) { const o = $(id); if (o) o.textContent = t(k) }
   $('lang').value = LANG
 }
@@ -67,7 +89,7 @@ function setTheme(v) {
 // 누가 커버되는지의 서명은 "성인수|1인전용|부양가족종류" 다. 사람이 읽을 이름으로 바꾸되
 // 펀드가 쓰는 마케팅 명칭을 지어내지 않는다. 부양가족 종류는 그대로 덧붙인다.
 function whoLabel(sig) {
-  const [adults, only, deps] = sig.split('|')
+  const [adults, only, deps] = String(sig ?? '').split('|')
   const d = deps ? deps.split(',') : []
   let base
   if (only === '1') base = t('who_single')
@@ -83,7 +105,9 @@ const excessLabel = (p) => {
   if (p[F.exA]) bits.push(t('excess_admission', { n: p[F.exA] }))
   return bits.length ? bits.join(', ') : t('no_excess')
 }
-const variantLabel = (p) => `${whoLabel(D.s.whos[p[F.who]])} — ${excessLabel(p)}`
+const variantLabel = (p) => `${whoLabel(own(D.s.whos, p[F.who]))} — ${excessLabel(p)}`
+const nameOf = (p) => String(own(D.s.names, p[F.name]) ?? '')
+const fundOf = (code) => String(own(D.funds, code) ?? code)
 
 const fill = (sel, opts, placeholder) => {
   const keep = sel.value
@@ -95,13 +119,13 @@ const fill = (sel, opts, placeholder) => {
 
 function fillFunds() {
   const funds = [...new Set(D.products.map(p => p[F.fund]))]
-    .map(c => [c, D.funds[c] ?? c]).sort((a, b) => a[1].localeCompare(b[1]))
+    .map(c => [c, fundOf(c)]).sort((a, b) => a[1].localeCompare(b[1]))
   fill($('fund'), funds, t('ph_fund'))
 }
 function refreshName() {
   const f = $('fund').value
   const names = [...new Set(D.products.filter(p => p[F.fund] === f).map(p => p[F.name]))]
-    .map(i => [i, D.s.names[i]]).sort((a, b) => a[1].localeCompare(b[1]))
+    .map(i => [i, String(own(D.s.names, i) ?? '')]).sort((a, b) => a[1].localeCompare(b[1]))
   fill($('name'), names, names.length ? t('ph_name') : '—')
   fill($('state'), [], '—'); fill($('variant'), [], '—'); render(null)
 }
@@ -133,22 +157,24 @@ function refreshVariant() {
   }
   opts.sort((a, b) => a[1].localeCompare(b[1]))
   fill($('variant'), opts, t('ph_variant'))
-  window.__variants = new Map(opts.map(([i]) => [String(i), D.products[i]]))
+  VARIANTS = new Map(opts.map(([i]) => [String(i), D.products[i]]))
   if (opts.length === 1) { $('variant').value = String(opts[0][0]); onPick(); return }
-  render(window.__variants.get($('variant').value) ?? null)
+  render(VARIANTS.get($('variant').value) ?? null)
 }
 function onPick() {
   const v = $('variant').value
-  const p = window.__variants?.get(v)
+  const p = VARIANTS.get(v)
   if (p) location.hash = v
   render(p ?? null)
 }
 
 // ---- 결과 ----
 function sparkline(hist, years) {
-  const pts = hist.map((v, i) => [years[i], v])
+  years = Array.isArray(years) ? years : []
+  hist = (Array.isArray(hist) ? hist : []).map(fin)
+  const pts = years.map((y, i) => [y, hist[i] ?? null])
   const have = pts.filter(p => p[1] != null)
-  if (have.length < 2) return `<p class="miss">${esc(t('spark_short'))}</p>`
+  if (have.length < 2 || years.length < 2) return `<p class="miss">${esc(t('spark_short'))}</p>`
   const W = 520, H = 130, PAD = 34
   const lo = Math.min(...have.map(p => p[1])), hi = Math.max(...have.map(p => p[1]))
   const span = (hi - lo) || 1
@@ -156,41 +182,47 @@ function sparkline(hist, years) {
   const y = (v) => H - 26 - (v - lo) / span * (H - 60)
   let seg = '', dots = '', labs = ''
   for (let i = 0; i < years.length; i++) {
-    labs += `<text x="${x(i)}" y="${H - 6}" font-size="11" fill="currentColor" opacity=".55" text-anchor="middle">${years[i]}</text>`
-    if (hist[i] == null) continue
-    dots += `<circle cx="${x(i)}" cy="${y(hist[i])}" r="3.5" fill="currentColor"/>`
-    dots += `<text x="${x(i)}" y="${y(hist[i]) - 9}" font-size="11" fill="currentColor" text-anchor="middle">$${hist[i].toFixed(0)}</text>`
+    labs += `<text x="${x(i)}" y="${H - 6}" font-size="11" fill="currentColor" opacity=".55" text-anchor="middle">${esc(String(years[i]))}</text>`
+    if (pts[i][1] == null) continue
+    dots += `<circle cx="${x(i)}" cy="${y(pts[i][1])}" r="3.5" fill="currentColor"/>`
+    dots += `<text x="${x(i)}" y="${y(pts[i][1]) - 9}" font-size="11" fill="currentColor" text-anchor="middle">$${pts[i][1].toFixed(0)}</text>`
     for (let j = i + 1; j < years.length; j++) {
-      if (hist[j] == null) continue
-      seg += `<line x1="${x(i)}" y1="${y(hist[i])}" x2="${x(j)}" y2="${y(hist[j])}" stroke="currentColor" stroke-width="1.6"/>`
+      if (pts[j][1] == null) continue
+      seg += `<line x1="${x(i)}" y1="${y(pts[i][1])}" x2="${x(j)}" y2="${y(pts[j][1])}" stroke="currentColor" stroke-width="1.6"/>`
       break
     }
   }
-  const missing = years.filter((_, i) => hist[i] == null)
+  const missing = pts.filter(p => p[1] == null).map(p => String(p[0]))
   const note = missing.length ? `<p class="miss">${esc(t('spark_missing', { years: missing.join(', ') }))}</p>` : ''
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t('spark_aria'))}">${seg}${dots}${labs}</svg>${note}`
 }
 
 function distribution(p, st) {
   const LABELS = t('bands')
-  const d = p[F.pct]
+  const d = fin(p[F.pct])
   const mine = d == null ? -1 : d < 0 ? 0 : d < 5 ? 1 : d < 10 ? 2 : d < 15 ? 3 : d < 20 ? 4 : 5
-  const max = Math.max(...st.bands)
-  return `<div class="bands">` + st.bands.map((n, i) =>
-    `<div class="band${i === mine ? ' you' : ''}"><span>${esc(LABELS[i])}</span>
-      <span class="bar" style="width:${Math.max(2, n / max * 100)}%"></span>
+  const bands = (Array.isArray(st.bands) ? st.bands : []).map(Number)
+  const max = Math.max(...bands)
+  // 막대 폭은 CSS 가 아니라 SVG 표현 속성으로 준다. style= 은 CSP 가 막는다.
+  const width = (n) => { const w = n / max * 100; return Number.isFinite(w) ? Math.max(2, Math.min(100, w)) : 2 }
+  return `<div class="bands">` + bands.map((n, i) =>
+    `<div class="band${i === mine ? ' you' : ''}"><span>${esc(Array.isArray(LABELS) ? LABELS[i] : '')}</span>
+      <svg class="bar" aria-hidden="true"><rect width="${width(n)}%" height="100%" rx="2"/></svg>
       <span class="n">${num(n)}</span></div>`).join('') + `</div>`
 }
 
 const DIFFS = [
-  ['d_waivers', p => { const w = D.s.waivers[p[F.waiv]]; return w ? w.split(',').map(x => tv('waiver_', x)).join(', ') : t('v_none') }],
+  ['d_waivers', p => { const w = own(D.s.waivers, p[F.waiv]); return w ? String(w).split(',').map(x => tv('waiver_', x)).join(', ') : t('v_none') }],
   ['d_copay', p => tv('copay_', p[F.copay])],
   ['d_gap', p => p[F.gap] ? t('v_yes') : t('v_no')],
   ['d_accom', p => tv('accom_', p[F.accom])],
   ['d_amb', p => p[F.amb] == null ? t('v_not_stated') : tv('amb_', p[F.amb])],
   ['d_waits', p => {
-    const w = JSON.parse(D.s.waits[p[F.waits]] || '{}')
-    return Object.entries(w).map(([k, v]) => `${tv('wait_', k)} ${t('unit_' + v.slice(-1), { n: v.slice(0, -1) })}`).join(', ') || t('v_not_stated')
+    let w = null
+    try { w = JSON.parse(own(D.s.waits, p[F.waits]) || '{}') } catch {}
+    if (!w || typeof w !== 'object' || Array.isArray(w)) w = {}
+    return Object.entries(w).filter(([, v]) => typeof v === 'string' && v.length > 1)
+      .map(([k, v]) => `${tv('wait_', k)} ${t('unit_' + v.slice(-1), { n: v.slice(0, -1) })}`).join(', ') || t('v_not_stated')
   }],
 ]
 
@@ -208,15 +240,15 @@ function sameCover(p) {
   const body = rows.map(q => {
     const cells = DIFFS.map(([, f], i) => {
       const v = f(q)
-      return `<td${v === mine[i] ? ' style="color:var(--ink3)"' : ''}>${esc(v)}</td>`
+      return `<td${v === mine[i] ? ' class="dim"' : ''}>${esc(v)}</td>`
     }).join('')
-    const u = D.s.urls[q[F.url]]
-    return `<tr><td>${esc(D.funds[q[F.fund]] ?? q[F.fund])}</td>
-      <td>${u ? `<a href="${esc(u)}" rel="nofollow noopener">${esc(D.s.names[q[F.name]])}</a>` : esc(D.s.names[q[F.name]])}</td>
+    const href = safeHref(own(D.s.urls, q[F.url]))
+    return `<tr><td>${esc(fundOf(q[F.fund]))}</td>
+      <td>${href ? `<a href="${esc(href)}" rel="nofollow noopener">${esc(nameOf(q))}</a>` : esc(nameOf(q))}</td>
       <td class="n">${money(q[F.prem])}</td>${cells}</tr>`
   }).join('')
-  return `<div class="scroll"><table>${head}<tr style="background:var(--card)"><td><strong>${esc(D.funds[p[F.fund]] ?? p[F.fund])}</strong></td>
-      <td><strong>${esc(D.s.names[p[F.name]])}</strong> — ${esc(t('yours'))}</td><td class="n"><strong>${money(p[F.prem])}</strong></td>
+  return `<div class="scroll"><table>${head}<tr class="you-row"><td><strong>${esc(fundOf(p[F.fund]))}</strong></td>
+      <td><strong>${esc(nameOf(p))}</strong> — ${esc(t('yours'))}</td><td class="n"><strong>${money(p[F.prem])}</strong></td>
       ${mine.map(v => `<td>${esc(v)}</td>`).join('')}</tr>${body}</table></div>
     ${p[F.corp] ? `<div class="note">${esc(t('peers_corp'))}</div>` : ''}
     <div class="note">${esc(t('peers_note', { combined: p[F.type] === 1 ? t('peers_note_combined') : '' }))}</div>`
@@ -225,17 +257,17 @@ function sameCover(p) {
 function render(p) {
   const out = $('out')
   if (!p) { out.innerHTML = ''; return }
-  const st = D.stats[p[F.type] === 0 ? 'hospital' : 'combined']
-  const d = p[F.pct]
+  const st = own(D.stats, p[F.type] === 0 ? 'hospital' : 'combined') ?? {}
+  const d = fin(p[F.pct])
   const kind = t(p[F.type] === 0 ? 'kind_hospital' : 'kind_combined')
-  const corp = p[F.corp] ? `<div class="note">${esc(D.s.corpText[p[F.corpTxt]] || t('corp_default'))}</div>` : ''
+  const corp = p[F.corp] ? `<div class="note">${esc(own(D.s.corpText, p[F.corpTxt]) || t('corp_default'))}</div>` : ''
   // 3월엔 같은 값이던 형제 스케일이 4월엔 더 싸다. 추측이 아니라 파일에 있는 값이다.
   const split = (p[F.sibWho] >= 0 && p[F.sibPrem] != null)
-    ? `<div class="note warn">${t('split_html', { who: esc(whoLabel(D.s.whos[p[F.sibWho]])), sib: money(p[F.sibPrem]), diff: money(p[F.prem] - p[F.sibPrem]) })}</div>` : ''
+    ? `<div class="note warn">${t('split_html', { who: esc(whoLabel(own(D.s.whos, p[F.sibWho]))), sib: money(p[F.sibPrem]), diff: money(p[F.prem] - p[F.sibPrem]) })}</div>` : ''
 
   // 발표 평균과 이 숫자는 같은 것을 재지 않는다. 나란히 놓고 아무 말도 안 하면
   // 독자는 "우리 기금이 평균보다 더 올렸다" 로 읽는다. 그건 이 데이터로 말할 수 없다.
-  const AVG = t('avg_html', { approved: `<a href="${CIRCULAR}" rel="nofollow noopener">${esc(t('avg_approved'))}</a>`, avg: D.meta.announcedAverage })
+  const AVG = t('avg_html', { approved: `<a href="${esc(CIRCULAR)}" rel="nofollow noopener">${esc(t('avg_approved'))}</a>`, avg: dec(D.meta.announcedAverage) })
 
   // 반올림된 퍼센트가 아니라 실제 값으로 판정한다. 0.00% 로 표시되지만
   // 실제로는 몇 센트 움직인 행이 221 개 있고, 그걸 '같은 값' 이라고 하면 거짓말이다.
@@ -245,36 +277,39 @@ function render(p) {
     : d == null
     ? `<p class="big">${esc(t('nomatch_big'))}</p><p class="sub">${t('nomatch_html')}</p>`
     : `<p class="big ${d >= 0 ? 'up' : 'down'}">${pctStr(d)}</p>
-       <p class="sub">${t('changed_html', { before: money(p[F.before]), prem: money(p[F.prem]), avg: AVG, n: num(st.priced), kind, median: st.median,
-         perinsurer: `<a href="${PERINSURER}" rel="nofollow noopener">${esc(t('perinsurer_link'))}</a>` })}</p>`
+       <p class="sub">${t('changed_html', { before: money(p[F.before]), prem: money(p[F.prem]), avg: AVG, n: num(st.priced), kind, median: dec(st.median),
+         perinsurer: `<a href="${esc(PERINSURER)}" rel="nofollow noopener">${esc(t('perinsurer_link'))}</a>` })}</p>`
 
-  const tiers = Object.entries(st.byTier).sort((a, b) => b[1][0] - a[1][0])
-  const top = st.topBand && st.topBand.n / st.topBand.total > 0.5
-    ? ' ' + t('topband_html', { n: num(st.topBand.n), total: num(st.topBand.total), fund: esc(D.funds[st.topBand.fund] ?? st.topBand.fund),
-        link: `<a href="${PERINSURER}" rel="nofollow noopener">${esc(t('topband_link'))}</a>` }) : ''
+  const tiers = Object.entries(st.byTier && typeof st.byTier === 'object' ? st.byTier : {}).sort((a, b) => Number(b[1][0]) - Number(a[1][0]))
+  const tb = st.topBand
+  const top = tb && Number(tb.n) / Number(tb.total) > 0.5
+    ? ' ' + t('topband_html', { n: num(tb.n), total: num(tb.total), fund: esc(fundOf(tb.fund)),
+        link: `<a href="${esc(PERINSURER)}" rel="nofollow noopener">${esc(t('topband_link'))}</a>` }) : ''
   out.innerHTML = `
-    <section style="border:0;padding-top:0;margin-top:24px">
-      <h2>${esc(D.s.names[p[F.name]])} · ${esc(p[F.state] === 'ALL' ? t('all_states') : p[F.state])} · ${esc(variantLabel(p))}</h2>
+    <section class="first">
+      <h2>${esc(nameOf(p))} · ${esc(p[F.state] === 'ALL' ? t('all_states') : p[F.state])} · ${esc(variantLabel(p))}</h2>
       ${number}${corp}${split}
     </section>
     <section><h2>${esc(t('h_history'))}</h2>${sparkline(p[F.hist], D.meta.years)}</section>
     <section><h2>${esc(t('h_where', { n: num(st.priced), kind, excluded: num(st.priced - st.pricedRetail) }))}</h2>
       ${distribution(p, st)}
-      <p class="sub" style="margin-top:12px">${esc(t('retail', { n: num(st.pricedRetail), median: st.medianRetail }))}${top}</p>
-      <p class="sub" style="margin-top:12px">${t('tiers_html', { list: tiers.map(([tn, [m, n]]) => `<strong>${esc(tn)} ${pctStr(m)}</strong> (${num(n)})`).join(', ') })}</p>
+      <p class="sub mt12">${esc(t('retail', { n: num(st.pricedRetail), median: dec(st.medianRetail) }))}${top}</p>
+      <p class="sub mt12">${t('tiers_html', { list: tiers.map(([tn, v]) => `<strong>${esc(tn)} ${pctStr(Array.isArray(v) ? v[0] : NaN)}</strong> (${num(Array.isArray(v) ? v[1] : NaN)})`).join(', ') })}</p>
     </section>
     <section><h2>${esc(t('h_peers'))}</h2>${sameCover(p)}</section>`
 }
 
-// 해시는 D.products 의 인덱스 하나다. 언어와 무관하고, 잘못된 값이면 빈 폼으로 시작한다.
+// 해시는 D.products 의 인덱스 하나다. 언어와 무관하고, 숫자가 아니면(빈 해시 포함) 빈 폼으로 시작한다.
 function fromHash() {
-  const i = Number(location.hash.slice(1))
-  const p = Number.isInteger(i) && D.products[i]
+  const h = location.hash.slice(1)
+  if (!/^\d{1,7}$/.test(h)) return
+  const i = Number(h)
+  const p = own(D.products, i)
   if (!p) return
   $('fund').value = p[F.fund]; refreshName()
   $('name').value = String(p[F.name]); refreshState()
   $('state').value = p[F.state]; refreshVariant()
-  if (window.__variants?.has(String(i))) { $('variant').value = String(i); render(p) }
+  if (VARIANTS.has(String(i))) { $('variant').value = String(i); render(p) }
 }
 
 // 언어를 바꾸면 선택은 유지한 채 전부 다시 그린다.
@@ -284,19 +319,20 @@ function relabel() {
   fillFunds()
   if ($('fund').value) {
     refreshName(); refreshState(); refreshVariant()
-    if (window.__variants?.has(v)) { $('variant').value = v; render(window.__variants.get(v)) }
+    if (VARIANTS.has(v)) { $('variant').value = v; render(VARIANTS.get(v)) }
   }
 }
 
 setTheme((() => { try { return localStorage.getItem('theme') } catch { return null } })())
+fillLangs()
 setLang(pickLang())
 $('lang').onchange = () => { setLang($('lang').value); relabel() }
 $('theme').onchange = () => setTheme($('theme').value)
 
-fetch('index.json').then(r => r.json()).then(j => {
+fetch('index.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() }).then(j => {
+  if (!j || !Array.isArray(j.products) || !j.meta || !j.s || !j.stats || !j.funds) throw new Error('bad index')
   D = j; indexProducts()
-  $('snapbefore').textContent = j.meta.snapshots.before
-  $('snapafter').textContent = j.meta.snapshots.after
+  showSnapshots()
   fillFunds()
   $('fund').onchange = refreshName
   $('name').onchange = refreshState

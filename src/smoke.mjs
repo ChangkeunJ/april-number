@@ -1,9 +1,13 @@
 // 브라우저 없이 app.js 를 실제로 돌려 본다. 템플릿 문자열이 많고 열 번호가 하나만
 // 어긋나도 화면에 undefined 가 찍힌다. 언어마다 전부 돌린다.
+// --site <dir> 로 index.json·strings.js·app.js 를 다른 곳에서 읽는다 (합성 index 로 돌릴 때).
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { checkStrings } from './strings-check.mjs'
 
-const D = JSON.parse(readFileSync('site/index.json', 'utf8'))
+const args = process.argv.slice(2)
+const site = args.includes('--site') ? args[args.indexOf('--site') + 1] : 'site'
+const D = JSON.parse(readFileSync(`${site}/index.json`, 'utf8'))
 const els = {}
 const mk = (id) => ({ id, innerHTML: '', textContent: '', value: '', disabled: false, onchange: null, dataset: {}, content: '' })
 const el = (id) => (els[id] ??= mk(id))
@@ -14,15 +18,17 @@ const ctx = vm.createContext({
   location: { hash: '', search: '' },
   localStorage: { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v }, removeItem: k => { delete store[k] } },
   navigator: { language: 'en-AU' },
-  window: {},
   fetch: () => new Promise(() => {}),
-  URLSearchParams,
+  URL, URLSearchParams,
   console,
 })
-vm.runInContext(readFileSync('site/strings.js', 'utf8'), ctx)
-vm.runInContext(readFileSync('site/app.js', 'utf8'), ctx)
+vm.runInContext(readFileSync(`${site}/strings.js`, 'utf8'), ctx)
+vm.runInContext(readFileSync(`${site}/app.js`, 'utf8'), ctx)
 ctx.__J = D
 vm.runInContext('D = __J; indexProducts()', ctx)
+
+// 키 집합·자리표시자·HTML 태그는 strings-check 가 영어와 대조한다. 어긋나면 렌더 전에 던진다.
+checkStrings(ctx.STR)
 
 const F = { fund:0, name:1, state:2, who:3, exP:4, exA:5, tier:6, cover:7, type:8,
             prem:9, pct:10, before:11, hist:12, corp:13, restr:14, corpTxt:15,
@@ -41,27 +47,12 @@ const cases = [
   ['결합', pick(p => p[F.type] === 1 && p[F.pct] != null)],
 ]
 const banned = /\b(cheaper|cheapest|better|best|switch to|you should|we recommend)\b/i
-const probes = ['undefined', 'NaN', '[object Object]', '&amp;amp;', '$null', '{']
+const probes = ['undefined', 'NaN', '[object Object]', '&amp;amp;', '$null', '{', 'style=']
 
 let bad = 0
 const langs = Object.keys(ctx.STR)
 for (const lang of langs) {
   ctx.setLang(lang)
-  const S = ctx.STR[lang]
-  // 영어에 있는 키가 빠지면 영어로 떨어지므로 화면은 안 깨지지만, 번역이 덜 된 것이다.
-  const missing = Object.keys(ctx.STR.en).filter(k => !(k in S))
-  if (missing.length) { console.log(`  ✗ ${lang}: 빠진 키 ${missing.length} — ${missing.slice(0, 5).join(', ')}`); bad++ }
-  const extra = Object.keys(S).filter(k => !(k in ctx.STR.en))
-  if (extra.length) { console.log(`  ✗ ${lang}: 영어에 없는 키 ${extra.join(', ')}`); bad++ }
-  // {x} 자리표시자는 영어와 같은 집합이어야 한다
-  for (const k of Object.keys(S)) {
-    if (typeof S[k] !== 'string') continue
-    const ph = s => new Set([...s.matchAll(/\{(\w+)\}/g)].map(m => m[1]))
-    const a = ph(ctx.STR.en[k] ?? ''), b = ph(S[k])
-    if ([...a].some(x => !b.has(x)) || [...b].some(x => !a.has(x))) { console.log(`  ✗ ${lang}/${k}: 자리표시자 불일치 en=${[...a]} ${lang}=${[...b]}`); bad++ }
-  }
-  if (!Array.isArray(S.bands) || S.bands.length !== 6) { console.log(`  ✗ ${lang}: bands 가 6개가 아니다`); bad++ }
-
   let n = 0
   for (const [label, ps] of cases) {
     for (const p of ps) {
@@ -86,7 +77,7 @@ let hidden = 0
 for (const rows of g.values()) {
   els.fund.value = rows[0][F.fund]; els.name.value = String(rows[0][F.name]); els.state.value = rows[0][F.state]
   ctx.refreshVariant()
-  const shown = [...ctx.window.__variants.values()]
+  const shown = vm.runInContext('[...VARIANTS.values()]', ctx)
   for (const p of rows) if (!shown.some(q => vis(q, p))) hidden++
 }
 console.log(`  picker: 화면상 다른데 숨는 행 ${hidden}`)
@@ -104,7 +95,12 @@ if (hidden) bad++
   ctx.setLang('en')
   console.log(`  해시 왕복: ${ok1 && ok2 ? 'OK' : '실패'}`)
   if (!(ok1 && ok2)) bad++
-  ctx.location.hash = '#%'; ctx.fromHash()   // 쓰레기 해시는 조용히 무시
+  // 쓰레기 해시와 빈 해시는 조용히 무시한다 (빈 해시가 0번 상품을 열던 적이 있다)
+  for (const h of ['#%', '', '#abc', '#1e3']) {
+    ctx.location.hash = h; els.out.innerHTML = ''; els.fund.value = ''
+    ctx.fromHash()
+    if (els.out.innerHTML !== '') { console.log(`  ✗ 해시 "${h}" 가 렌더됐다`); bad++ }
+  }
 }
 
 console.log(bad ? `\n실패 ${bad}건` : `\nOK — ${langs.length}개 언어 모든 분기 렌더 정상`)

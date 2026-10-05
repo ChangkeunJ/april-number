@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-xS407IpiHohjMVhD6j42kP7TSNJgPunoSF11DWxXAk8='; style-src 'sha256-yNRIhlZh2xJM/t5uTaAkPkIDGrUQ0oGiCBnAxfy0pt8='; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests">
+<meta name="referrer" content="no-referrer">
 <title>Your April Number — what your own policy's listed price did, not the average</title>
-<meta name="description" content="The percentage your specific hospital policy changed on 1 April 2026, computed from the Private Health Insurance Ombudsman's own monthly data files.">
+<meta name="description" content="The percentage your specific hospital policy changed on 1 April, computed from the Private Health Insurance Ombudsman's own monthly data files.">
 <script>
 // 저장된 테마를 첫 그리기 전에 건다. 안 그러면 다크 사용자에게 흰 화면이 한 번 번쩍인다.
 try { var th = localStorage.getItem('theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th } catch (e) {}
@@ -65,8 +67,10 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .note.warn{border-left-color:var(--up);background:var(--up-wash);color:var(--ink)}
 .bands{display:grid;gap:3px;margin:0;font-size:13px}
 .band{display:grid;grid-template-columns:minmax(88px,auto) 1fr 62px;align-items:center;gap:10px}
-.bar{height:15px;background:var(--rule);border-radius:2px}
-.band.you .bar{background:var(--mark)}
+/* 막대는 inline style 없이 그린다: SVG rect 의 width 표현 속성이 폭, CSS 가 색. */
+.bar{display:block;width:100%;height:15px;margin:0}
+.bar rect{fill:var(--rule)}
+.band.you .bar rect{fill:var(--mark)}
 .band.you{font-weight:700}
 .band .n{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink2)}
 .band.you .n{color:var(--ink)}
@@ -75,6 +79,13 @@ footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--rule);
   font-size:13px;color:var(--ink3)}
 footer a{color:var(--ink2)}
 .miss{color:var(--ink3);font-style:italic}
+/* app.js 가 만드는 HTML 과 아래 본문에 style= 을 쓰지 않는다. CSP style-src 가 해시 하나뿐이다. */
+.sr-only{position:absolute;left:-9999px}
+.mt10{margin-top:10px}
+.mt12{margin-top:12px}
+section.first{border:0;padding-top:0;margin-top:24px}
+td.dim{color:var(--ink3)}
+tr.you-row{background:var(--card)}
 @media(min-width:620px){form{grid-template-columns:1fr 1fr}
   form>div:nth-child(1),form>div:nth-child(2){grid-column:1/-1}}
 @media(prefers-reduced-motion:no-preference){body{transition:background .2s,color .2s}}
@@ -83,19 +94,19 @@ footer a{color:var(--ink2)}
 <body>
 <div class="wrap">
   <div class="top">
-    <label for="lang" class="visually-hidden" style="position:absolute;left:-9999px" data-t="label_lang">Language</label>
+    <label for="lang" class="sr-only" data-t="label_lang">Language</label>
     <select id="lang"></select>
-    <label for="theme" style="position:absolute;left:-9999px" data-t="label_theme">Appearance</label>
+    <label for="theme" class="sr-only" data-t="label_theme">Appearance</label>
     <select id="theme">
       <option value="system" id="theme-system">System</option>
       <option value="light" id="theme-light">Light</option>
       <option value="dark" id="theme-dark">Dark</option>
     </select>
   </div>
-  <span class="tag" data-t="eyebrow">Built from Private Health Insurance Ombudsman data · 1 April 2026 · not a government site</span>
+  <span class="tag" data-t="eyebrow">Built from Private Health Insurance Ombudsman data · the 1 April rate rise · not a government site</span>
   <h1 data-t="h1">Your April number</h1>
   <p class="dek" data-t-html="dek_html">The Government announces one industry average. Individual products moved by anything from a fall to more than 20%. This works out what the government's own monthly files record for <em>your</em> policy.</p>
-  <p class="sub" style="margin-top:10px" data-t="subdek">The listed price of your policy, before rebate and before any discount or loading.</p>
+  <p class="sub mt10" data-t="subdek">The listed price of your policy, before rebate and before any discount or loading.</p>
 
   <form id="pick">
     <div><label for="fund" data-t="label_fund">Health fund</label><select id="fund"><option value="" data-t="ph_loading">Loading…</option></select></div>
@@ -116,10 +127,6 @@ footer a{color:var(--ink2)}
   </footer>
 </div>
 <script src="strings.js"></script>
-<script>
-// 언어 목록은 strings.js 가 정한다.
-(function () { var s = document.getElementById('lang'); for (var k in STR) { var o = document.createElement('option'); o.value = k; o.textContent = STR[k]._name; s.appendChild(o) } })()
-</script>
 <script src="app.js"></script>
 </body>
 </html>
