@@ -29,7 +29,7 @@ const { RISE, LIMITS, PKG, validateRise, loadRise, loadManifest, saveManifest, f
 const columns = await import('./columns.mjs')
 const { parseFile, dec } = await import('./parse.mjs')
 const { load, key, pct, median } = await import('./join.mjs')
-const { build, restrictedInFunds } = await import('./build.mjs')
+const { build, restrictedInFunds, SCHEMA } = await import('./build.mjs')
 const { checkIndex } = await import('./test.mjs')
 const { check } = await import('./check.mjs')
 const ckan = await import('./ckan.mjs')
@@ -125,7 +125,7 @@ await group('config: xmlPath errors and manifest helpers', () => {
   assert.throws(() => loadManifest(f), /package must be a CKAN package UUID/)
 })
 
-await group('columns: F in site/app.js equals columns.mjs', () => {
+await group('columns: F and SCHEMA in site/app.js equal columns.mjs / build.mjs', async () => {
   const src = readFileSync(join(ROOT, 'site', 'app.js'), 'utf8')
   const m = /\bconst F = (\{[^{}]*\})/.exec(src)
   assert.ok(m, 'F literal found in app.js')
@@ -133,6 +133,11 @@ await group('columns: F in site/app.js equals columns.mjs', () => {
   assert.deepEqual(appF, columns.F)
   assert.equal(columns.WIDTH, 25)
   assert.deepEqual([...new Set(Object.values(columns.F))].sort((a, b) => a - b), [...Array(25).keys()])
+  // app.js 의 SCHEMA 리터럴은 build.mjs 가 index.json 에 싣는 값과 같아야 한다 (다르면 모든 로드가 stale 분기로 간다)
+  const sm = /\bconst SCHEMA = (\d+)\b/.exec(src)
+  assert.ok(sm, 'SCHEMA literal found in app.js')
+  assert.equal(Number(sm[1]), SCHEMA)
+  assert.equal((await import('./test-xss.mjs')).SCHEMA, SCHEMA, 'test-xss synthetic index schema')
 })
 
 let aprRows = []
@@ -244,12 +249,35 @@ await group('build: fixture stats equal the pinned expected block', async () => 
   void row
 })
 
+await group('build: meta.schema/version/built and version.js', async () => {
+  assert.equal(D.meta.schema, SCHEMA)
+  assert.match(D.meta.version, /^[0-9a-f]{12}$/)
+  assert.match(D.meta.built, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, 'full ISO timestamp')
+  assert.deepEqual(Object.keys(D.meta).slice(0, 3), ['built', 'version', 'schema'])
+  const vjs = readFileSync(join(TMP, 'site', 'version.js'), 'utf8')
+  assert.match(vjs, /^var BUILD = \{.*\}\n$/s, 'one classic-script statement')
+  assert.ok(!/\b(export|import)\b/.test(vjs))
+  const B = JSON.parse(JSON.stringify(vm.runInNewContext(vjs + '; BUILD')))
+  assert.deepEqual(B, { v: D.meta.version, built: D.meta.built, schema: SCHEMA, riseYear: 2026, riseDate: '2026-04-01', before: '2026-03-01', after: '2026-04-05', years: [2025, 2026] })
+  // 같은 데이터 → 같은 version (built 가 달라도); 데이터가 다르면 다른 version
+  const again = await build({ outDir: join(TMP, 'site-again'), log: noop })
+  assert.equal(again.meta.version, D.meta.version)
+  assert.equal(JSON.parse(readFileSync(join(TMP, 'site-again', 'index.json'), 'utf8')).meta.version, D.meta.version)
+  const other = riseCopy(r => { r.announcedAverage = 4.42 }, 'rise-other-avg.json')
+  mkdirSync(join(TMP, 'cli-other'), { recursive: true })
+  const r = run('build.mjs', { cwd: join(TMP, 'cli-other'), env: { RISE_FILE: other } })
+  assert.equal(r.code, 0, r.stderr)
+  const O = JSON.parse(readFileSync(join(TMP, 'cli-other', 'site', 'index.json'), 'utf8'))
+  assert.notEqual(O.meta.version, D.meta.version)
+  assert.equal(vm.runInNewContext(readFileSync(join(TMP, 'cli-other', 'site', 'version.js'), 'utf8') + '; BUILD.v'), O.meta.version)
+})
+
 await group('build: restrictedInFunds() and strict-mode gates (child processes)', () => {
   assert.equal(restrictedInFunds('<Funds><Fund><FundCode>AAA</FundCode><FundName>x</FundName></Fund></Funds>'), null)
   assert.deepEqual([...restrictedInFunds('<Fund><FundCode>AAA</FundCode><FundName>a</FundName><FundType>Open</FundType></Fund><Fund><FundCode>ACA</FundCode><FundName>b</FundName><FundType>Restricted</FundType></Fund>')], ['ACA'])
   assert.deepEqual([...restrictedInFunds('<FundCode>AAA</FundCode><FundName>a</FundName><FundType>Open</FundType><FundCode>NHB</FundCode><FundName>b</FundName><FundType>Restricted</FundType>')], ['NHB'])
   assert.deepEqual([...restrictedInFunds(readFileSync(join(APR, 'Funds 05-Apr-2026.xml'), 'utf8'))].sort(), [...RISE.restrictedFunds].sort())
-  const cwd = join(TMP, 'cli-bad'); mkdirSync(cwd)   // 이 빌드들의 site/index.json 은 여기만 더럽힌다
+  const cwd = join(TMP, 'cli-bad'); mkdirSync(cwd, { recursive: true })   // 이 빌드들의 site/index.json 은 여기만 더럽힌다
   const nullAvg = riseCopy(r => { r.announcedAverage = null }, 'rise-null-avg.json')
   let r = run('build.mjs', { cwd, env: { RISE_FILE: nullAvg } })
   assert.equal(r.code, 1); assert.match(r.stderr, /announcedAverage is null/)
@@ -501,6 +529,28 @@ await group('fetch: fetchAll end to end with a mocked CKAN (manifest, verified s
   await fetchAll({ names: ['April 2026'], fetchImpl: mock(), log: noop, manifest: { package: PKG, resources: {} }, manifestFile: join(d6, 's.json'), dataDir: d6 })
   assert.ok(!calls.includes('https://files.data.gov.au/apr.zip'), 'no download when the zip is already there')
   assert.equal((await hashFile(join(APR, 'Funds 05-Apr-2026.xml'))).sha256, sha256(readFileSync(join(APR, 'Funds 05-Apr-2026.xml'))))
+})
+
+// ---- 사이트 검사 스크립트 (자식 프로세스) ----
+await group('site: csp-check (inline hashes, no style=/on*=/javascript:)', () => {
+  const r = run('csp-check.mjs', { cwd: ROOT })
+  assert.equal(r.code, 0, r.stderr); assert.match(r.stdout, /csp-check OK/)
+})
+await group('site: test-xss (hostile synthetic index, lang/hash guards, stale branch)', () => {
+  const r = run('test-xss.mjs', { cwd: ROOT })
+  assert.equal(r.code, 0, r.stdout + r.stderr); assert.match(r.stdout, /test-xss OK/)
+})
+// 영어 문구에 키나 자리표시자를 더하면 여섯 번역이 따라올 때까지 이 그룹만 실패한다 — 지우지 말고 번역을 맞출 것.
+await group('site: strings-check (all seven languages share keys, placeholders, tags, hrefs)', () => {
+  const r = run('strings-check.mjs', { cwd: ROOT })
+  assert.equal(r.code, 0, r.stderr); assert.match(r.stdout, /strings-check OK — en es fr ja ko vi zh/)
+})
+await group('site: smoke over the fixture build (index.json + version.js + the real html/js)', () => {
+  const dir = join(TMP, 'site')
+  for (const f of ['index.html', 'app.js', 'strings.js']) copyFileSync(join(ROOT, 'site', f), join(dir, f))
+  assert.ok(existsSync(join(dir, 'version.js')))
+  const r = run('smoke.mjs', { cwd: ROOT, args: ['--site', dir] })
+  assert.equal(r.code, 0, r.stdout + r.stderr); assert.match(r.stdout, /OK — 7개 언어/); assert.match(r.stdout, /stale 분기: OK/)
 })
 
 rmSync(TMP, { recursive: true, force: true })

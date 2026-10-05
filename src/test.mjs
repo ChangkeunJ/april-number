@@ -7,11 +7,17 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { F, WIDTH } from './columns.mjs'
 import { RISE, expectedFor, isCandidate, yearOf } from './config.mjs'
+import { SCHEMA } from './build.mjs'
 
 export function checkIndex(D, { expected = null, restrictedFunds = RISE.restrictedFunds, history = RISE.history, log = console.log } = {}) {
   let skipped = 0
   const count = (fn) => { if (expected) fn(expected); else skipped++ }
   const RS = new Set(restrictedFunds)
+
+  // 0. 빌드 식별: app.js 가 대조하는 schema, version.js 의 ?v= 가 되는 version, 푸터에 찍히는 built
+  assert.equal(D.meta.schema, SCHEMA, 'meta.schema')
+  assert.match(String(D.meta.version), /^[0-9a-f]{12}$/, 'meta.version')
+  assert.ok(typeof D.meta.built === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(D.meta.built) && !Number.isNaN(Date.parse(D.meta.built)), 'meta.built is a full ISO timestamp')
 
   // 1. 열 개수가 F 와 맞는다
   for (const p of D.products) assert.equal(p.length, WIDTH, 'row width')

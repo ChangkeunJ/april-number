@@ -3,17 +3,20 @@ const F = { fund:0, name:1, state:2, who:3, exP:4, exA:5, tier:6, cover:7, type:
             prem:9, pct:10, before:11, hist:12, corp:13, restr:14, corpTxt:15,
             url:16, copay:17, accom:18, gap:19, amb:20, waiv:21, waits:22, sibWho:23, sibPrem:24 }
 
-// privatehealth.gov.au/dynamic/insurer/restricted — 가입 자격이 있어야 드는 곳들.
-// 상품 단위 Corporate/OnlyAvailableWith 와는 별개라 따로 걸러야 한다.
-const RESTRICTED = new Set(['ACA', 'CBH', 'AHB', 'AMA', 'NHB', 'SPE', 'RBH', 'NTF', 'QTU'])
-
-// 부처 회람과 보험사별 승인 평균. 이 페이지가 대조하는 유일한 외부 숫자의 출처다.
-const CIRCULAR = 'https://www.health.gov.au/news/phi-circulars/phi-1126-private-health-insurance-premium-round-announcement'
-const PERINSURER = 'https://www.health.gov.au/resources/publications/average-annual-price-changes-in-private-health-insurance-premiums'
+// index.json 의 레이아웃 버전. src/build.mjs 의 SCHEMA 와 같아야 한다.
+// 캐시된 app.js 와 새 index.json(또는 그 반대)이 만나면 meta.schema 가 달라 한 번 새로고침한다.
+const SCHEMA = 2
+// version.js 가 정의하는 빌드 정보(v, built, riseDate, before, after …). 없으면 빈 객체 — index.json 이 오면 meta 로 채운다.
+const B = (typeof BUILD === 'object' && BUILD) ? BUILD : {}
 
 let D = null
 let BY = null   // fund|name|state → [index]. picker 를 열 때마다 55,678행을 훑지 않는다.
 let VARIANTS = new Map()   // variant 옵션 값(인덱스 문자열) → 상품 행
+// privatehealth.gov.au/dynamic/insurer/restricted — 가입 자격이 있어야 드는 곳들. 상품 단위
+// Corporate/OnlyAvailableWith 와는 별개라 따로 걸러야 한다. 집합은 rise.json → meta.restrictedFunds 에서 온다.
+let RESTRICTED = new Set()
+const restrictedSet = (meta) => new Set((meta && Array.isArray(meta.restrictedFunds) ? meta.restrictedFunds : [])
+  .filter(c => typeof c === 'string' && /^[A-Z]{3}$/.test(c)))
 function indexProducts() {
   BY = new Map()
   D.products.forEach((p, i) => { const k = p[F.fund] + '|' + p[F.name] + '|' + p[F.state]; let a = BY.get(k); if (!a) BY.set(k, a = []); a.push(i) })
@@ -33,9 +36,55 @@ const okLang = (q) => typeof q === 'string' && /^[a-z]{2}$/.test(q) && Object.ha
 const t = (k, vars) => {
   let s = own(STR[LANG], k) ?? own(STR.en, k)
   if (s == null) return k
-  // 한 번에 치환한다. 치환된 값 안의 {x} 가 다시 치환되면 안 된다.
-  if (vars && typeof s === 'string') s = s.replace(/\{(\w+)\}/g, (m, key) => Object.hasOwn(vars, key) ? String(vars[key]) : m)
+  // 한 번에 치환한다. 치환된 값 안의 {x} 가 다시 치환되면 안 된다. 날짜 자리표시자는 항상 채우고, vars 가 우선한다.
+  if (typeof s === 'string' && s.includes('{')) {
+    const v = Object.assign(dates(), vars)
+    s = s.replace(/\{(\w+)\}/g, (m, key) => Object.hasOwn(v, key) ? String(v[key]) : m)
+  }
   return s
+}
+// 부처 회람·보험사별 승인 평균 링크. rise.json → meta.links. http(s) 가 아니거나 없으면 글자만 둔다.
+const linkHtml = (name, text) => {
+  const href = safeHref(D && D.meta && D.meta.links ? own(D.meta.links, name) : null)
+  return href ? `<a href="${esc(href)}" rel="nofollow noopener">${esc(text)}</a>` : esc(text)
+}
+
+// ---- 날짜 ----
+// 문구의 {rise_date} {before_date} {after_date} {rise_year}. index.json 이 오기 전엔 version.js(B)의 값으로,
+// 온 뒤엔 meta 로 그린다. 월 이름은 언어의 로캘이 정한다. 값이 없거나 이상하면 원문 그대로 또는 빈 문자열 — 'Invalid Date' 는 안 된다.
+// 원문은 _html 문구에도 그대로 들어가므로 HTML 특수문자가 있으면 버린다 (Intl 출력에는 없다).
+const fmtDate = (iso) => {
+  if (typeof iso !== 'string' || /[&<>"']/.test(iso)) return ''
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
+  const d = new Date(iso + 'T00:00:00Z')
+  if (Number.isNaN(d.getTime())) return iso
+  try { return new Intl.DateTimeFormat(STR[LANG]._locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d) } catch { return iso }
+}
+let DATES = null, DATES_KEY = ''   // 같은 언어·같은 값이면 다시 포맷하지 않는다 (t() 는 렌더마다 수백 번 불린다)
+function dates() {
+  const fromMeta = !!(D && D.meta)
+  const m = fromMeta ? D.meta : B
+  const snap = fromMeta ? (m.snapshots && typeof m.snapshots === 'object' ? m.snapshots : {}) : m
+  const key = [LANG, m.riseDate, snap.before, snap.after, m.riseYear].map(String).join('|')
+  if (DATES && key === DATES_KEY) return Object.assign({}, DATES)
+  DATES = { rise_date: fmtDate(m.riseDate), before_date: fmtDate(snap.before), after_date: fmtDate(snap.after),
+            rise_year: Number.isInteger(m.riseYear) ? String(m.riseYear) : '' }
+  DATES_KEY = key
+  return Object.assign({}, DATES)
+}
+// 푸터의 빌드 시각과 버전. index.json 이 오기 전엔 version.js 값으로. Intl 출력이거나 esc() 를 거친 값만 돌려준다.
+function builtVars() {
+  const m = (D && D.meta) ? D.meta : B
+  const raw = typeof m.built === 'string' ? m.built : ''
+  const d = raw ? new Date(raw) : null
+  let built = esc(raw)
+  if (d && !Number.isNaN(d.getTime())) {
+    try {
+      built = esc(new Intl.DateTimeFormat(STR[LANG]._locale, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Australia/Sydney', timeZoneName: 'short' }).format(d))
+    } catch {}
+  }
+  const v = typeof m.version === 'string' ? m.version : (typeof m.v === 'string' ? m.v : '')
+  return { built, v: esc(v) }
 }
 // 데이터 열거값(XSD 고정값)의 표시명. 표에 없는 값은 원문 그대로.
 const tv = (prefix, v) => own(STR[LANG], prefix + v) ?? own(STR.en, prefix + v) ?? v
@@ -64,15 +113,20 @@ function showSnapshots() {
   if (b) b.textContent = String(s.before ?? '')
   if (a) a.textContent = String(s.after ?? '')
 }
+// 고정 문구(제목·설명·data-t·data-t-html·푸터). 언어를 바꿀 때와 index.json 이 온 뒤(날짜·빌드 정보가 meta 로 바뀐다) 다시 그린다.
+function fillStatic() {
+  document.title = t('title')
+  const m = document.querySelector('meta[name="description"]'); if (m) m.content = t('meta_desc')
+  for (const el of document.querySelectorAll('[data-t]')) el.textContent = t(el.dataset.t)
+  const bv = builtVars()
+  for (const el of document.querySelectorAll('[data-t-html]')) el.innerHTML = t(el.dataset.tHtml, bv)
+  if (D) showSnapshots()
+}
 function setLang(l) {
   LANG = okLang(l) ? l : 'en'
   try { localStorage.setItem('lang', LANG) } catch {}
   document.documentElement.lang = STR[LANG]._locale
-  document.title = t('title')
-  const m = document.querySelector('meta[name="description"]'); if (m) m.content = t('meta_desc')
-  for (const el of document.querySelectorAll('[data-t]')) el.textContent = t(el.dataset.t)
-  for (const el of document.querySelectorAll('[data-t-html]')) el.innerHTML = t(el.dataset.tHtml)
-  if (D) showSnapshots()
+  fillStatic()
   for (const [id, k] of [['theme-system', 'theme_system'], ['theme-light', 'theme_light'], ['theme-dark', 'theme_dark']]) { const o = $(id); if (o) o.textContent = t(k) }
   $('lang').value = LANG
 }
@@ -267,7 +321,7 @@ function render(p) {
 
   // 발표 평균과 이 숫자는 같은 것을 재지 않는다. 나란히 놓고 아무 말도 안 하면
   // 독자는 "우리 기금이 평균보다 더 올렸다" 로 읽는다. 그건 이 데이터로 말할 수 없다.
-  const AVG = t('avg_html', { approved: `<a href="${esc(CIRCULAR)}" rel="nofollow noopener">${esc(t('avg_approved'))}</a>`, avg: dec(D.meta.announcedAverage) })
+  const AVG = t('avg_html', { approved: linkHtml('circular', t('avg_approved')), avg: dec(D.meta.announcedAverage) })
 
   // 반올림된 퍼센트가 아니라 실제 값으로 판정한다. 0.00% 로 표시되지만
   // 실제로는 몇 센트 움직인 행이 221 개 있고, 그걸 '같은 값' 이라고 하면 거짓말이다.
@@ -278,13 +332,13 @@ function render(p) {
     ? `<p class="big">${esc(t('nomatch_big'))}</p><p class="sub">${t('nomatch_html')}</p>`
     : `<p class="big ${d >= 0 ? 'up' : 'down'}">${pctStr(d)}</p>
        <p class="sub">${t('changed_html', { before: money(p[F.before]), prem: money(p[F.prem]), avg: AVG, n: num(st.priced), kind, median: dec(st.median),
-         perinsurer: `<a href="${esc(PERINSURER)}" rel="nofollow noopener">${esc(t('perinsurer_link'))}</a>` })}</p>`
+         perinsurer: linkHtml('perInsurer', t('perinsurer_link')) })}</p>`
 
   const tiers = Object.entries(st.byTier && typeof st.byTier === 'object' ? st.byTier : {}).sort((a, b) => Number(b[1][0]) - Number(a[1][0]))
   const tb = st.topBand
   const top = tb && Number(tb.n) / Number(tb.total) > 0.5
     ? ' ' + t('topband_html', { n: num(tb.n), total: num(tb.total), fund: esc(fundOf(tb.fund)),
-        link: `<a href="${esc(PERINSURER)}" rel="nofollow noopener">${esc(t('topband_link'))}</a>` }) : ''
+        link: linkHtml('perInsurer', t('topband_link')) }) : ''
   out.innerHTML = `
     <section class="first">
       <h2>${esc(nameOf(p))} · ${esc(p[F.state] === 'ALL' ? t('all_states') : p[F.state])} · ${esc(variantLabel(p))}</h2>
@@ -329,14 +383,36 @@ setLang(pickLang())
 $('lang').onchange = () => { setLang($('lang').value); relabel() }
 $('theme').onchange = () => setTheme($('theme').value)
 
-fetch('index.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() }).then(j => {
-  if (!j || !Array.isArray(j.products) || !j.meta || !j.s || !j.stats || !j.funds) throw new Error('bad index')
+// 캐시된 페이지와 데이터 파일이 다른 빌드다. 한 번만 새로고침하고(sessionStorage 가드), 두 번째도 다르면 안내만 남긴다.
+function stale() {
+  let again = true   // 가드를 기록하지 못하면(저장소 불가) 새로고침하지 않는다 — 무한 새로고침을 막는다
+  try {
+    const key = 'reloaded-' + (typeof B.v === 'string' ? B.v : '')
+    const seen = sessionStorage.getItem(key) === '1'
+    if (!seen) sessionStorage.setItem(key, '1')
+    again = seen
+  } catch {}
+  $('out').innerHTML = `<p class="sub">${t('stale_html')}</p>`
+  if (!again) location.reload()
+}
+// index.json 을 받아 화면을 연다. fetch 의 .then 이 부르고, smoke/test-xss 는 네트워크 없이 직접 부른다.
+function applyIndex(j) {
+  if (!j || !Array.isArray(j.products) || !j.meta || typeof j.meta !== 'object' || !j.s || !j.stats || !j.funds) throw new Error('bad index')
+  if (j.meta.schema !== SCHEMA) { stale(); return false }
   D = j; indexProducts()
-  showSnapshots()
+  RESTRICTED = restrictedSet(D.meta)
+  fillStatic()
   fillFunds()
   $('fund').onchange = refreshName
   $('name').onchange = refreshState
   $('state').onchange = refreshVariant
   $('variant').onchange = onPick
   fromHash()
-}).catch(e => { $('out').innerHTML = `<p class="sub">${esc(t('load_error', { msg: e.message }))}</p>` })
+  return true
+}
+
+// ?v= 는 version.js 의 빌드 버전이다. 같은 데이터면 같은 값이라 캐시가 살고, 새 빌드면 새 URL 이라 캐시를 비켜 간다.
+fetch('index.json?v=' + encodeURIComponent(typeof B.v === 'string' ? B.v : ''), { cache: 'no-cache' })
+  .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+  .then(applyIndex)
+  .catch(e => { $('out').innerHTML = `<p class="sub">${esc(t('load_error', { msg: e.message }))}</p>` })

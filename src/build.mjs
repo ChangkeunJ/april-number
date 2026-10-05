@@ -2,12 +2,17 @@
 // 연도·스냅샷·발표 평균·제한 보험사는 rise.json(config.mjs) 에서 온다.
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseFile, dec } from './parse.mjs'
 import { load, key, pct, median } from './join.mjs'
 import { RISE, xmlPath, stampOf, stampToIso, years, isCandidate } from './config.mjs'
 import { WIDTH } from './columns.mjs'
+
+// index.json 의 레이아웃 버전. 행 레이아웃 F(columns.mjs)나 stats 필드가 바뀔 때마다 올린다.
+// site/app.js 의 SCHEMA 와 같아야 한다 — 다르면 캐시된 app.js 가 새 데이터를 잘못 읽을 수 있어 app.js 가 새로고침한다.
+export const SCHEMA = 2
 
 const tag = (s, name) => { const m = new RegExp(`<${name}>([^<]*)</${name}>`).exec(s); return m ? dec(m[1]) : null }
 
@@ -150,7 +155,9 @@ export async function build({ outDir = 'site', log = console.log } = {}) {
 
   const out = {
     meta: {
-      built: new Date().toISOString().slice(0, 10),
+      // built 와 version 은 아래에서 채운다. 둘을 null 로 둔 직렬화의 sha256 이 version 이라
+      // 같은 데이터는 날이 달라도 같은 version 을 받는다 (version.js 의 ?v= 캐시 키).
+      built: null, version: null, schema: SCHEMA,
       rateRise: RISE.riseDate, announcedAverage: RISE.announcedAverage, years: years(),
       source: 'https://data.gov.au/data/dataset/8ab10b1f-6eac-423c-abc5-bbffc31b216c',
       publisher: 'Private Health Insurance Ombudsman', licence: 'CC BY 3.0 AU',
@@ -164,9 +171,15 @@ export async function build({ outDir = 'site', log = console.log } = {}) {
     s: { names: names.a, urls: urls.a, whos: whos.a, covers: covers.a, waivers: waivers.a, waits: waits.a, corpText: corpText.a },
     products,
   }
+  out.meta.version = createHash('sha256').update(JSON.stringify(out)).digest('hex').slice(0, 12)
+  out.meta.built = new Date().toISOString()
   mkdirSync(outDir, { recursive: true })
   const json = JSON.stringify(out)
   writeFileSync(join(outDir, 'index.json'), json)
+  // version.js: classic script 하나. app.js 가 index.json 을 ?v= 로 받고, index.json 이 오기 전에도 날짜를 그린다.
+  const BUILD = { v: out.meta.version, built: out.meta.built, schema: SCHEMA, riseYear: RISE.riseYear, riseDate: RISE.riseDate,
+                  before: out.meta.snapshots.before, after: out.meta.snapshots.after, years: out.meta.years }
+  writeFileSync(join(outDir, 'version.js'), `var BUILD = ${JSON.stringify(BUILD)}\n`)
   const gz = gzipSync(json, { level: 9 })
   log(`\nindex.json  ${(json.length / 1e6).toFixed(2)} MB raw / ${(gz.length / 1e6).toFixed(2)} MB gzip`)
   log(`products ${products.length}  names ${names.a.length}  covers ${covers.a.length}  funds ${Object.keys(funds).length}`)
