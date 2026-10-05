@@ -5,10 +5,10 @@
 import { readFileSync } from 'node:fs'
 import { parseFile } from './parse.mjs'
 import { key, pct, median } from './join.mjs'
+import { RISE, xmlPath, csvPath } from './config.mjs'
 
-const D = 'data'
-const MAR = `${D}/march-2026/Hospital Open 01-Mar-2026.xml`
-const APR = `${D}/april-2026/Hospital Open 05-Apr-2026.xml`
+const MAR = xmlPath(RISE.before, 'Hospital')
+const APR = xmlPath(RISE.after, 'Hospital')
 
 const grab = async (path) => {
   const byId = new Map(), byKey = new Map()
@@ -29,12 +29,12 @@ console.log(`MAR ${mar.byId.size} ids (dup ${mar.dupId}), ${mar.byKey.size} keys
 console.log(`APR ${apr.byId.size} ids (dup ${apr.dupId}), ${apr.byKey.size} keys (dup ${apr.dupKey})`)
 
 // 변경 CSV: ProductID -> OLD_ProductID
-const csv = readFileSync(`${D}/april-2026/Product Changes 05-Apr-2026.csv`, 'utf8').split('\n')
+const csv = readFileSync(csvPath(RISE.after), 'utf8').split('\n')
 const hdr = csv[0].split(',')
 const iPid = hdr.indexOf('ProductID'), iOld = hdr.indexOf('OLD_ProductID')
 const iType = hdr.indexOf('Change Type'), iCode = hdr.indexOf('ProductCode')
 const iOldCode = hdr.indexOf('OLD_ProductCode')
-const prev = new Map(); const types = {}
+const prev = new Map(); const types = Object.create(null)
 let recode = 0
 for (let i = 1; i < csv.length; i++) {
   const f = csv[i].split(',')
@@ -52,7 +52,7 @@ let sameId = 0, viaCsv = 0, noMatch = 0
 const rises = []
 const disagree = []
 for (const [pid, a] of apr.byId) {
-  const p = pid.toLowerCase()
+  const p = String(pid).toLowerCase()
   let b = marById.get(p)
   if (b) sameId++
   else { const o = prev.get(p); if (o && marById.get(o)) { b = marById.get(o); viaCsv++ } }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Funds>
+<Fund><FundCode>AAA</FundCode><FundName>Alpha Health Fund</FundName><FundType>Open</FundType></Fund>
+<Fund><FundCode>BBB</FundCode><FundName>Beta &amp; Gamma Health</FundName><FundType>Open</FundType></Fund>
+<Fund><FundCode>CCC</FundCode><FundName>Coastal Care &lt;Mutual&gt;</FundName><FundType>Open</FundType></Fund>
+<Fund><FundCode>DDD</FundCode><FundName>Delta Workers Health</FundName><FundType>Open</FundType></Fund>
+<Fund><FundCode>EEE</FundCode><FundName>Epsilon Health</FundName><FundType>Open</FundType></Fund>
+<Fund><FundCode>ACA</FundCode><FundName>Restricted Fund ACA</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>CBH</FundCode><FundName>Restricted Fund CBH</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>AHB</FundCode><FundName>Restricted Fund AHB</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>AMA</FundCode><FundName>Restricted Fund AMA</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>NHB</FundCode><FundName>Restricted Fund NHB</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>SPE</FundCode><FundName>Restricted Fund SPE</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>RBH</FundCode><FundName>Restricted Fund RBH</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>NTF</FundCode><FundName>Restricted Fund NTF</FundName><FundType>Restricted</FundType></Fund>
+<Fund><FundCode>QTU</FundCode><FundName>Restricted Fund QTU</FundName><FundType>Restricted</FundType></Fund>
+</Funds>

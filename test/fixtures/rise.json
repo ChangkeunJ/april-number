@@ -1,0 +1,32 @@
+{
+  "riseYear": 2026,
+  "riseDate": "2026-04-01",
+  "before": "March 2026",
+  "after": "April 2026",
+  "history": ["April 2025", "April 2026"],
+  "announcedAverage": 4.41,
+  "links": {
+    "circular": "https://www.health.gov.au/news/phi-circulars/phi-1126-private-health-insurance-premium-round-announcement",
+    "perInsurer": "https://www.health.gov.au/resources/publications/average-annual-price-changes-in-private-health-insurance-premiums"
+  },
+  "restrictedFunds": ["ACA", "CBH", "AHB", "AMA", "NHB", "SPE", "RBH", "NTF", "QTU"],
+  "downloadHosts": ["data.gov.au"],
+  "expected": {
+    "2026": {
+      "hospital": {
+        "open": 32,
+        "priced": 31,
+        "median": 4.5,
+        "bands": [2, 15, 7, 3, 1, 3],
+        "split": 1,
+        "pricedRetail": 27,
+        "medianRetail": 4.5,
+        "zero": 3,
+        "topBand": { "fund": "EEE", "n": 2, "total": 3 }
+      },
+      "combined": { "priced": 10 },
+      "products": 43,
+      "excludedMin": 6
+    }
+  }
+}

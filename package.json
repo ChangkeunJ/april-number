@@ -8,7 +8,12 @@
     "fetch": "node src/fetch.mjs",
     "build": "node --max-old-space-size=6000 src/build.mjs",
     "test": "node --max-old-space-size=4000 src/test.mjs",
+    "test:unit": "node src/test-unit.mjs",
     "check": "node src/check.mjs",
+    "smoke": "node src/smoke.mjs",
+    "i18n": "node src/i18n.mjs",
+    "discover": "node src/discover.mjs",
+    "report": "node src/report.mjs",
     "serve": "python3 -m http.server 8080 --directory site"
   },
   "engines": { "node": ">=20" }

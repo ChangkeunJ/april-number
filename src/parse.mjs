@@ -2,16 +2,19 @@
 // 247 MB 짜리 파일에서 필요한 필드가 전부 평평한 태그나 속성이라
 // sax/fast-xml-parser 는 더 느리고 메모리만 훨씬 더 먹는다.
 import { createReadStream } from 'node:fs'
+import { LIMITS } from './config.mjs'
 
 // XML 엔티티를 푼다. 이 파일에는 &amp; 만 나오지만(4월 병원 10,980건,
 // 결합 52,494건) 과거 연도 파일까지 같은 파서를 쓰므로 다섯 개와 숫자
 // 참조를 전부 처리한다. 풀지 않으면 화면에 &amp; 가 그대로 찍힌다.
+// 범위를 벗어난 숫자 참조(&#99999999999;)는 원문 그대로 둔다 — 파서가 죽어선 안 된다.
 const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
-const dec = (v) => v == null || v.indexOf('&') < 0 ? v
+const cp = (n, m) => { try { return String.fromCodePoint(n) } catch (e) { if (e instanceof RangeError) return m; throw e } }
+export const dec = (v) => v == null || v.indexOf('&') < 0 ? v
   : v.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g,
-      (m, d, h, n) => d ? String.fromCodePoint(+d)
-                    : h ? String.fromCodePoint(parseInt(h, 16))
-                    : (NAMED[n] ?? m))
+      (m, d, h, n) => d ? cp(+d, m)
+                    : h ? cp(parseInt(h, 16), m)
+                    : (Object.hasOwn(NAMED, n) ? NAMED[n] : m))
 
 const attr = (s, name) => {
   const m = new RegExp(`\\b${name}="([^"]*)"`).exec(s)
@@ -23,14 +26,14 @@ const tag = (s, name) => {
 }
 
 // 커버 벡터. 서비스명은 알파벳순으로 고정돼 있으므로 값만 이어 붙인다.
-//   C=Covered  R=Restricted  N=NotCovered
+//   C=Covered  R=Restricted  N=NotCovered  ?=모르는 값
 const COVER = { Covered: 'C', Restricted: 'R', NotCovered: 'N' }
 function coverVector(s) {
   const block = /<MedicalServices>([\s\S]*?)<\/MedicalServices>/.exec(s)
   if (!block) return null
   const out = []
   for (const m of block[1].matchAll(/<MedicalService Title="([^"]+)" Cover="([^"]+)"/g)) {
-    out.push(m[1], COVER[m[2]] ?? '?')
+    out.push(m[1], Object.hasOwn(COVER, m[2]) ? COVER[m[2]] : '?')
   }
   // 제목까지 포함해 해시한다. 서비스 목록 자체가 바뀌면 벡터가 달라져야 한다.
   return out.join('')
@@ -57,7 +60,8 @@ function parseProduct(s) {
   const oawInner = (oaw && oaw[1] || '').trim()
   const hosp = /<HospitalCover\b([^>]*)>([\s\S]*)/.exec(s)
 
-  const waits = {}
+  // 데이터 값이 키가 된다. 프로토타입 없는 객체라야 "__proto__" 같은 제목이 그냥 키로 남는다.
+  const waits = Object.create(null)
   for (const m of s.matchAll(/<WaitingPeriod Unit="([^"]+)"[^>]*Title="([^"]+)">(\d+)</g)) {
     waits[m[2]] = `${m[3]}${m[1][0]}`
   }
@@ -97,28 +101,42 @@ function parseProduct(s) {
 }
 
 // </Product> 로 끊어 읽는다. 마지막 조각은 다음 청크 앞에 붙인다.
+// 꼬리가 LIMITS.tailBytes 를 넘으면(</Product> 가 안 나옴 — 잘렸거나 상품 파일이 아님) 중단한다.
 export function parseFile(path, onProduct) {
   return new Promise((resolve, reject) => {
     let tail = ''
     let n = 0
+    let seen = 0
     let declared = null
     const st = createReadStream(path, { encoding: 'utf8', highWaterMark: 4 << 20 })
     st.on('data', (chunk) => {
-      if (declared === null) {
-        const m = /<Products Count="(\d+)"/.exec(tail + chunk)
-        if (m) declared = Number(m[1])
-      }
-      const buf = tail + chunk
-      const parts = buf.split('</Product>')
-      tail = parts.pop()
-      for (const p of parts) {
-        const i = p.indexOf('<Product ')
-        if (i < 0) continue
-        onProduct(parseProduct(p.slice(i)))
-        n++
+      try {
+        if (declared === null && seen < LIMITS.headBytes) {
+          const m = /<Products Count="(\d+)"/.exec(tail + chunk)
+          if (m) declared = Number(m[1])
+        }
+        seen += chunk.length
+        const buf = tail + chunk
+        const parts = buf.split('</Product>')
+        tail = parts.pop()
+        for (const p of parts) {
+          const i = p.indexOf('<Product ')
+          if (i < 0) continue
+          onProduct(parseProduct(p.slice(i)))
+          n++
+        }
+        if (tail.length > LIMITS.tailBytes) {
+          throw new Error(`${path}: ${tail.length} bytes without </Product> (limit ${LIMITS.tailBytes}) — truncated or not a product file`)
+        }
+      } catch (e) {
+        st.destroy(e)
       }
     })
-    st.on('end', () => resolve({ count: n, declared }))
+    st.on('end', () => {
+      // 마지막 </Product> 뒤에 또 <Product 가 열려 있으면 파일이 중간에 끊긴 것이다.
+      if (tail.indexOf('<Product ') >= 0) reject(new Error(`${path}: file ends inside a <Product> — truncated (${n} products read${declared === null ? '' : `, header declared ${declared}`})`))
+      else resolve({ count: n, declared })
+    })
     st.on('error', reject)
   })
 }
