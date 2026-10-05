@@ -1,0 +1,124 @@
+# 새 PHIO 스냅샷을 찾아 검토용 PR 을 연다. 숫자는 사람이 rise.json 에 pin 하고 머지한 뒤에만 공개된다.
+#
+# - discover 는 읽기만 한다. propose 만 쓰기 권한이 있고, 브랜치 update/rise-<Y> 와 PR 만 만든다.
+#   자동 머지·자동 배포는 없다. 배포는 ci.yml 이 master push 에서만 한다.
+# - GITHUB_TOKEN 으로 만든 PR 은 ci.yml 을 트리거하지 않는다 (GitHub 규칙: 토큰이 일으킨 이벤트는 다른
+#   워크플로를 깨우지 않는다). 대신 propose 가 fetch → check → build → test → smoke 를 이미 돌렸고,
+#   유지관리자가 숫자를 pin 해서 push 하는 커밋이 ci.yml 을 돌린다. PAT 는 일부러 쓰지 않는다.
+# - 저장소 설정 Settings → Actions → General → Workflow permissions 에서
+#   "Allow GitHub Actions to create and approve pull requests" 가 켜져 있어야 gh pr create 가 성공한다.
+# - PR 브랜치가 이미 있으면 그 위에 얹는다 (유지관리자의 pin 커밋을 덮어쓰지 않는다). 그래서 브랜치 선택이
+#   파이프라인보다 먼저 오고, Y 는 discover 의 year 출력이다 (March 만 올라온 baseline 도 update/rise-<Y+1>).
+# - 액션은 ci.yml 과 같은 commit SHA 로 고정한다. 뒤의 "# vX.Y.Z" 는 사람용 주석이며 Dependabot 이 같이 갱신한다.
+# - GitHub 는 60일 동안 커밋이 없으면 schedule 을 끈다. 그때는 `gh workflow run update` 로 깨운다 (README).
+name: update
+on:
+  schedule:
+    - cron: '23 4 * * 1'    # 매주 월요일 04:23 UTC
+    - cron: '23 4 * 3,4 *'  # 3·4월은 매일 (PHIO 는 4월 5~10일께 게시한다)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Run propose even when discover finds nothing new (re-runs the pipeline and refreshes the report)
+        type: boolean
+        default: false
+
+# 기본 권한은 없음. job 마다 필요한 만큼만.
+permissions: {}
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  # package_show 한 번: 새 March/April 또는 재발행이 있는가. 출력 파일로 답하므로 exit 는 오류일 때만 1.
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      found: ${{ steps.d.outputs.found }}
+      kind: ${{ steps.d.outputs.kind }}
+      year: ${{ steps.d.outputs.year }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - id: d
+        run: node src/discover.mjs --github-output
+
+  # 유일한 쓰기 job: 파이프라인 전체를 돌리고 rise.json·snapshots.json·reports/ 만 커밋해 PR 을 연다.
+  # data/ 와 site/index.json·site/version.js 는 절대 커밋하지 않는다 (git add 는 명시 경로만).
+  propose:
+    needs: discover
+    if: needs.discover.outputs.found == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write        # git push update/rise-<Y>
+      pull-requests: write   # gh pr create / edit
+    env:
+      Y: ${{ needs.discover.outputs.year }}
+      KIND: ${{ needs.discover.outputs.kind }}
+    steps:
+      # 이 job 은 push 해야 하므로 토큰을 남긴다 (persist-credentials 기본값 true 를 명시). 다른 job 은 전부 false.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # 캐시 키는 스냅샷 매니페스트. fetch 가 복원된 파일의 sha256 을 재검증하므로 부분 일치로 낡은 캐시를 받아도 안전하다.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: data
+          key: privatehealth-${{ hashFiles('snapshots.json') }}
+          restore-keys: |
+            privatehealth-
+      # 열린 PR 브랜치가 있으면 그 위에서 일한다. 없으면 master 에서 새로 딴다.
+      - name: Branch update/rise-${{ needs.discover.outputs.year }}
+        run: |
+          set -euo pipefail
+          case "$Y" in [0-9][0-9][0-9][0-9]) ;; *) echo "::error::discover produced year=$Y"; exit 1 ;; esac
+          B="update/rise-$Y"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git fetch origin "+refs/heads/$B:refs/remotes/origin/$B" 2>/dev/null; then
+            echo "reusing $B (keeps commits already on the PR branch)"
+            git switch -c "$B" --track "origin/$B"
+          else
+            git switch -c "$B"
+          fi
+      - run: node src/discover.mjs --apply
+      - run: npm run fetch
+      - run: npm run check -- --candidate
+      - run: npm run build
+        env:
+          CANDIDATE: '1'
+      - run: npm test
+        env:
+          CANDIDATE: '1'
+      - run: npm run smoke
+      - run: node src/report.mjs --out "reports/rise-$Y.md"
+      - name: Commit and open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          B="update/rise-$Y"
+          git add rise.json snapshots.json reports/
+          if git diff --cached --quiet; then
+            echo "::notice::nothing changed in rise.json, snapshots.json or reports/ — no commit, no pull request"
+            exit 0
+          fi
+          git commit -m "data: $KIND snapshot(s) for $Y"
+          git push --force-with-lease -u origin "$B"
+          gh pr create --base master --head "$B" \
+            --title "Rise $Y: new PHIO snapshot(s) — verify and pin" \
+            --body-file "reports/rise-$Y.md" \
+          || gh pr edit "$B" --body-file "reports/rise-$Y.md" \
+          || { echo "::error::gh pr create/edit failed. Is 'Allow GitHub Actions to create and approve pull requests' enabled (Settings → Actions → General → Workflow permissions)?"; exit 1; }

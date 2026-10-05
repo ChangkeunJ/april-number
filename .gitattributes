@@ -1,0 +1,6 @@
+# LF everywhere. site/index.html carries sha256 hashes of its inline <script>/<style> blocks in the
+# CSP meta; a CRLF checkout would change the bytes and the hashes would no longer match (csp-check).
+* text=auto eol=lf
+site/index.html text eol=lf
+site/*.js text eol=lf
+test/fixtures/*.zip binary

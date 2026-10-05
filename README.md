@@ -69,8 +69,9 @@ between funds and are not in the product file at all.
 `Corporate IsCorporate="true"` and a further 2,380 carry a non-`NotApplicable`
 `OnlyAvailableWith`. Separately, nine insurers are restricted — you must be eligible to
 join them. The product file does not record that, but the Funds file in the same ZIP
-does (`<FundType>Restricted</FundType>`, the same nine codes), and the build carries
-them as a hardcoded set of nine fund codes matching
+does (`<FundType>Restricted</FundType>`, the same nine codes). The build reads the set
+from `rise.json` (`restrictedFunds`), checks it against that Funds file and fails if the
+two disagree; the list matches
 [privatehealth.gov.au](https://privatehealth.gov.au/dynamic/insurer/restricted).
 All three are filtered out of every alternatives list. Leaving them in puts an
 employer-only or members-only product at the top of a list sorted by price.
@@ -89,31 +90,114 @@ Services Act; nothing else here goes near it.
 
 ## Rebuild
 
-    npm run fetch    # ~350 MB, six snapshots, extracts three XML members from each
-    npm run check    # the join test: 29,702 common, median 4.15%, bands 524/17538/9515/1352/177/596
-    npm run build    # emits site/index.json, ~1.2 MB gzipped
-    npm run test     # verifies the index against what app.js assumes
-    node src/smoke.mjs   # runs render() over every branch without a browser
+    npm run fetch                 # ~350 MB, six snapshots; three XML members and the Product Changes CSV from each, zip deleted after
+    npm run check                 # the join test: 29,702 common, median 4.15%, bands 524/17538/9515/1352/177/596
+    npm run check -- --candidate  # a year with nothing pinned yet: prints the block, writes reports/candidate-<year>.json
+    npm run build                 # emits site/index.json, ~1.2 MB gzipped, and site/version.js
+    npm test                      # verifies the index against what app.js assumes
+    npm run smoke                 # runs render() over every branch in every language without a browser
+    npm run test:unit             # fixtures only, no network, a few seconds
+    npm run discover              # asks data.gov.au whether a new March or April snapshot exists (exit 10 if so)
+    npm run report                # writes reports/rise-<year>.md from the candidate numbers and the build
+    node src/i18n.mjs             # after editing site/strings.<lang>.json: regenerates site/strings.js
     npm run serve
 
-`npm run check` is the one that matters. Those six numbers were measured from the raw
-ZIPs. If they ever stop reproducing, the scale signature or the excess extraction has
-silently drifted and every percentage on the page is wrong.
+`npm run check` is the one that matters. The six numbers it asserts were measured from the raw
+ZIPs and live in `rise.json` under `expected`, one block per year, with the rest of the gate —
+open and retail counts, sibling splits, unchanged premiums, the top band — checked by `npm test`
+from the same block. If they ever stop reproducing, the scale signature or the excess extraction
+has silently drifted and every percentage on the page is wrong. A year with no `expected` block
+cannot be built for publication: `check` exits 2, `build` refuses a null `announcedAverage`, and
+`--candidate` (or `CANDIDATE=1`) is the only way past either. CI never deploys a candidate build.
 
-Refresh twice a year: early March for the pre-rise baseline, early April when the new
-file lands (the 2026 one was extracted on 5 April).
+Two files configure everything. `rise.json` is edited by hand: the rise year and date, the two
+snapshot names, the April history, the announced average and the circular it came from, the
+restricted-fund codes, the hosts a download may come from, and the pinned numbers per year.
+`snapshots.json` is written by the machine: for each snapshot, the CKAN resource id and URL,
+`last_modified`, the sha256 of the zip and of every extracted member, and the file-name stamp.
+It is trust-on-first-use. A clean clone's first `npm run fetch` records what it downloaded; every
+later fetch compares against the record and stops if a zip's hash has changed. A reviewer can
+reproduce any entry with `curl -L <url> | sha256sum`. The first fetch after this change
+re-downloads all six snapshots once, because an existing `data/` has no manifest entries;
+afterwards fetch prints `verified` for each and downloads nothing. Fetch now keeps the
+Product Changes CSV (`src/idjoin.mjs` reads it) and deletes the zips once the members are out.
+
+Refresh twice a year: early March for the pre-rise baseline, early April when the new file lands
+(the 2026 one was extracted on 5 April). The workflow in the next section does the asking.
 
 Resources are matched on `resource.name`, never the URL. Eight of the 73 filenames
 break any date pattern you would write — `privatehealth-05-apr-2026.zip`,
 `privatehealth.gov.au-april-2022.zip`. The CKAN `created` timestamps are junk too; the
 October 2021 resource claims 2019.
 
+### CI
+
+`.github/workflows/ci.yml` runs two jobs on every push and pull request: `unit` (`npm run
+test:unit` on the fixtures, no network) and `test` (the real data: fetch, check, build, test,
+smoke). On a push to `master` the `test` job uploads `site/` and a `deploy` job publishes it to
+GitHub Pages — the bytes that just passed the gate, never a candidate build. Actions are pinned
+to commit SHAs and Dependabot keeps them current. The `data/` cache is keyed on `snapshots.json`
+and fetch re-verifies every restored file against it, so a stale or damaged cache is simply
+downloaded again.
+
+## Updating for a new rise year
+
+`.github/workflows/update.yml` asks data.gov.au for new snapshots every Monday, and every day
+in March and April. When `discover` finds a `March <year>` or `April <year>` that
+`snapshots.json` does not know, the `propose` job runs the whole pipeline in candidate mode and
+opens a pull request from the branch `update/rise-<year>` — or adds to the one already open —
+with `reports/rise-<year>.md` as its body: resource metadata and hashes, the candidate
+`expected` block, last year's numbers beside this year's, the restricted-fund set, the funds
+with the highest median listed-premium change, and the checklist below. Only `rise.json`,
+`snapshots.json` and `reports/` are committed; `data/`, `site/index.json` and `site/version.js`
+never are. A March-only find produces a baseline PR that records the new resource and changes
+nothing else. Nothing is published until a person pins the numbers in `rise.json` and merges.
+A pull request opened with the workflow's own token does not trigger `ci.yml`; the pinning
+commit pushed to that branch does. GitHub disables a schedule after 60 days without commits —
+if nothing has run by early March, `gh workflow run update` starts it (`-f force=true` opens a
+PR even when nothing is new).
+
+Pin by hand, in this order (the same list is in `.github/PULL_REQUEST_TEMPLATE/update.md`):
+
+1. Fill `announcedAverage` and `links.circular` in `rise.json` from the PHI circular. The
+   figure is the Minister's industry average, copied as published.
+2. Spot-check three products against the raw XML in `data/<snapshot>/Hospital Open *.xml`:
+   March premium, April premium, the percentage the page shows.
+3. Paste the `expected` block from `reports/rise-<year>.md` into `rise.json`, `excludedMin`
+   included.
+4. Confirm the restricted-fund set: the build log's `restricted funds: N codes match the Funds
+   file`, and privatehealth.gov.au's own list.
+5. `npm run build && npm run serve` and read the dates in all seven languages (`?lang=ko`,
+   `zh`, `ja`, `vi`, `es`, `fr`): rise date, both snapshot dates, the footer build line.
+6. Update the numbers in this README with the same hedged wording.
+7. `npm run check && npm run build && npm test && npm run smoke` without `--candidate`, push,
+   let `ci.yml` run strict, merge; `deploy` follows.
+
+If a file changes under a name already recorded, `discover` reports it as republished and
+`fetch` stops on the hash mismatch; `node src/discover.mjs --refresh "<name>"` is the one way
+to accept that. If a download redirects to a host outside `rise.json` `downloadHosts`, fetch
+refuses it; `node src/discover.mjs --probe "<name>"` prints the redirect chain so the host can be
+added on purpose.
+
+One-time repository settings, not in version control: Settings → Pages → Source = GitHub
+Actions; Settings → Actions → General → Workflow permissions → allow GitHub Actions to create
+and approve pull requests (without it `gh pr create` fails); branch protection on `master`
+requiring `ci / unit` and `ci / test`; Security → private vulnerability reporting (see
+`SECURITY.md`).
+
 ## Runtime
 
-One HTML file, two JS files, one JSON file. No framework, no build step for the site, no
-network requests after the page loads, no cookies, no analytics, no accounts. Selection
-lives in the URL hash as a product index so a result is linkable in any language.
-Deploys to any static host.
+One HTML file, three JS files (`strings.js`, `version.js` written by the build, `app.js`),
+one JSON file. No framework, no build step for the site, no network requests after the
+page loads, no cookies, no analytics, no accounts. Selection lives in the URL hash as a
+product index so a result is linkable in any language. Deploys to any static host.
+
+The page carries a Content-Security-Policy meta: no inline styles or scripts except the
+theme script, which runs before first paint and is allowed by its hash
+(`node src/csp-check.mjs` prints the corrected meta when that block changes). `index.json`
+is fetched once with `?v=<build version>`, so a new build is never read from an old cache,
+and the footer shows the data file's build time and version. Dates in the UI are formatted
+per language from the data file, so a new year needs no string edits.
 
 Seven languages: English, 한국어, 中文, 日本語, Tiếng Việt, Español, Français. Picked from
 `?lang=xx`, then the saved choice, then the browser language. The UI is translated;
@@ -122,8 +206,9 @@ filed, and the footer says so. `site/strings.js` holds English by hand and the o
 six generated from `site/strings.<lang>.json` by `node src/i18n.mjs`. Every translation
 was reviewed for meaning drift against the English — the hedges are load-bearing under
 ACL s 18 and a translator's instinct to make a sentence firmer is exactly the failure
-mode. `src/smoke.mjs` renders every branch in every language and checks key sets,
-placeholders and HTML tags match the English.
+mode. `src/strings-check.mjs` verifies that key sets, placeholders, HTML tags and hrefs
+match the English in every language, before `i18n.mjs` writes and before anything renders;
+`src/smoke.mjs` renders every branch in every language.
 
 Light and dark follow the OS unless the reader picks one; the choice is saved in
 `localStorage` and applied before first paint.
