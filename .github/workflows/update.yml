@@ -50,12 +50,17 @@ jobs:
           node-version: 22
       - id: d
         run: node src/discover.mjs --github-output
+      # 재발행만 있으면(새 March/April 없음) propose 는 돌지 않는다 — --apply 가 사람의 결정을 기다리며 exit 10 이라
+      # 매 실행이 빨간 job 이 될 뿐이다. 대신 run 에 경고를 남긴다. 받아들이려면 --refresh 뒤 fetch (README).
+      - if: steps.d.outputs.kind == 'republished'
+        run: |
+          echo "::warning::discover — a recorded snapshot changed on CKAN (republished). Nothing new to propose. Run 'node src/discover.mjs' locally to see which, then 'node src/discover.mjs --refresh \"<name>\"' and 'npm run fetch' to accept it."
 
   # 유일한 쓰기 job: 파이프라인 전체를 돌리고 rise.json·snapshots.json·reports/ 만 커밋해 PR 을 연다.
   # data/ 와 site/index.json·site/version.js 는 절대 커밋하지 않는다 (git add 는 명시 경로만).
   propose:
     needs: discover
-    if: needs.discover.outputs.found == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force == true)
+    if: (needs.discover.outputs.found == 'true' && needs.discover.outputs.kind != 'republished') || (github.event_name == 'workflow_dispatch' && inputs.force == true)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -93,7 +98,8 @@ jobs:
           else
             git switch -c "$B"
           fi
-      - run: node src/discover.mjs --apply
+      # exit 10 = 새 것은 없고 재발행만 있다 (force 로 왔을 때). 사람의 결정은 --refresh 이고, 여기서는 보고서만 다시 만든다.
+      - run: node src/discover.mjs --apply || [ $? -eq 10 ]
       - run: npm run fetch
       - run: npm run check -- --candidate
       - run: npm run build
@@ -102,8 +108,13 @@ jobs:
       - run: npm test
         env:
           CANDIDATE: '1'
+      # candidate 모드의 smoke 는 문구에 박힌 지난 연도(footer2_html 의 리베이트 문장)를 경고로만 둔다 — PR 은 열리고
+      # 체크리스트가 고치라고 한다. strict smoke(ci.yml, pin 뒤)는 그 문장이 고쳐질 때까지 실패한다.
       - run: npm run smoke
-      - run: node src/report.mjs --out "reports/rise-$Y.md"
+        env:
+          CANDIDATE: '1'
+      # --year: March 만 올라온 baseline 은 rise.json 이 아직 지난 해라, 연도를 주지 않으면 지난 해 보고서가 올해 파일명으로 나온다.
+      - run: node src/report.mjs --year "$Y" --out "reports/rise-$Y.md"
       - name: Commit and open or update the pull request
         env:
           GH_TOKEN: ${{ github.token }}

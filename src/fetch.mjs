@@ -10,7 +10,7 @@
 // 멈춘다(재발행 또는 손상). 추출이 끝나면 ZIP 은 지운다(캐시 절반).
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream, mkdirSync, existsSync, rmSync, statSync, readdirSync } from 'node:fs'
+import { createReadStream, mkdirSync, existsSync, rmSync, lstatSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DATA, MANIFEST, MANIFEST_FILE, LIMITS, RISE, XML_RE, CSV_RE, slug, snapshotDir, wantedSnapshots, saveManifest } from './config.mjs'
@@ -43,9 +43,11 @@ export async function verifySnapshot(name, { manifest = MANIFEST, dataDir = DATA
   for (const f of readdirSync(dir)) if ((XML_RE.test(f) || CSV_RE.test(f)) && !Object.hasOwn(members, f)) return false
   for (const f of files) {
     const p = join(dir, f)
-    if (!existsSync(p)) return false
+    // lstat: 심링크·디렉터리·특수 파일은 멤버가 아니다 (stat/hash 는 링크를 따라가 버린다). 다시 추출해 디렉터리를 지운다.
+    const st = lstatSync(p, { throwIfNoEntry: false })
+    if (!st || !st.isFile()) return false
     const want = members[f]
-    if (!want || statSync(p).size !== want.size) return false
+    if (!want || st.size !== want.size) return false
     if ((await hashFile(p)).sha256 !== want.sha256) return false
   }
   return true
@@ -83,6 +85,8 @@ export async function extractSnapshot(zip, dir, { limits = LIMITS, log = () => {
   }
   if (csvs.length > 1) throw new Error(`${zip}: ${csvs.length} "Product Changes" CSVs, expected at most one`)
   const wanted = [...KINDS.map(k => byKind[k][0]), ...csvs]
+  // 멤버 전체 이름이 unzip 인자로 간다. '-' 로 시작하면 unzip 이 옵션으로 읽는다 ("-d<경로>/Funds ….xml" 은 추출 위치를 바꾼다).
+  for (const w of wanted) if (w.startsWith('-')) throw new Error(`${zip}: member name ${JSON.stringify(w)} starts with "-" — refusing (unzip would read it as an option)`)
   const stamps = new Set(KINDS.map(k => XML_RE.exec(base(byKind[k][0]))[2]))
   if (stamps.size !== 1) throw new Error(`${zip}: XML members carry different stamps: ${[...stamps].join(', ')}`)
   const stamp = [...stamps][0]
@@ -108,14 +112,18 @@ export async function extractSnapshot(zip, dir, { limits = LIMITS, log = () => {
   // 디렉터리는 ZIP 에서만 파생된다. 지난 판의 다른 스탬프 파일이 남으면 xmlPath 가 둘을 본다.
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
-  unzip(['-o', '-j', zip, ...wanted.map(literal), '-d', dir])
+  // -d 는 ZIP 보다 앞에 둔다. unzip 은 첫 -d 만 쓰므로 뒤의 멤버 인자가 옵션처럼 보여도 추출 위치를 못 바꾼다.
+  unzip(['-o', '-j', '-d', dir, zip, ...wanted.map(literal)])
 
   const members = {}
   for (const w of wanted) {
     const b = base(w)
     const p = join(dir, b)
-    if (!existsSync(p)) throw new Error(`${zip}: "${w}" was not extracted`)
-    const size = statSync(p).size
+    // lstat 으로 본다: unzip 은 심링크 항목을 심링크로 복원하고, stat/hash/read 는 전부 링크를 따라간다 (/dev/zero 면 영원히 읽는다).
+    const st = lstatSync(p, { throwIfNoEntry: false })
+    if (!st) throw new Error(`${zip}: "${w}" was not extracted`)
+    if (!st.isFile()) { rmSync(dir, { recursive: true, force: true }); throw new Error(`${zip}: "${w}" is not a regular file (symlink or special entry) — refusing`) }
+    const size = st.size
     if (size > limits.memberBytes) { rmSync(p, { force: true }); throw new Error(`${zip}: "${w}" is ${size} bytes after extraction, limit ${limits.memberBytes}`) }
     members[b] = { size, sha256: (await hashFile(p)).sha256 }
   }

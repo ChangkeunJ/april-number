@@ -132,13 +132,17 @@ October 2021 resource claims 2019.
 
 ### CI
 
-`.github/workflows/ci.yml` runs two jobs on every push and pull request: `unit` (`npm run
-test:unit` on the fixtures, no network) and `test` (the real data: fetch, check, build, test,
-smoke). On a push to `master` the `test` job uploads `site/` and a `deploy` job publishes it to
-GitHub Pages — the bytes that just passed the gate, never a candidate build. Actions are pinned
-to commit SHAs and Dependabot keeps them current. The `data/` cache is keyed on `snapshots.json`
-and fetch re-verifies every restored file against it, so a stale or damaged cache is simply
-downloaded again.
+`.github/workflows/ci.yml` runs two jobs on every pull request and on every push to `master`:
+`unit` (`npm run test:unit` on the fixtures, no network) and `test` (the real data: fetch, check,
+build, test, smoke, csp-check). On a push to `master` the `test` job uploads `site/` and, once both
+jobs are green, a `deploy` job publishes it to GitHub Pages — the bytes that just passed the gate,
+never a candidate build. Actions are pinned to commit SHAs and Dependabot keeps them current. The
+`data/` cache is keyed on `snapshots.json` and fetch re-verifies every restored file against it, so
+a stale or damaged cache is simply downloaded again. That verification needs a populated manifest:
+while `snapshots.json` has no `resources` entries — as committed here, because the file is filled
+by a machine that can reach data.gov.au and the `test` job runs read-only — fetch cannot vouch for
+a restored cache and every `test` run downloads all six snapshots. Run `npm run fetch` once locally
+and commit the `snapshots.json` it writes; from then on CI verifies the cache and downloads nothing.
 
 ## Updating for a new rise year
 
@@ -150,8 +154,11 @@ with `reports/rise-<year>.md` as its body: resource metadata and hashes, the can
 `expected` block, last year's numbers beside this year's, the restricted-fund set, the funds
 with the highest median listed-premium change, and the checklist below. Only `rise.json`,
 `snapshots.json` and `reports/` are committed; `data/`, `site/index.json` and `site/version.js`
-never are. A March-only find produces a baseline PR that records the new resource and changes
-nothing else. Nothing is published until a person pins the numbers in `rise.json` and merges.
+never are. A March-only find produces a baseline PR that records the new resource in
+`snapshots.json` and adds `reports/rise-<year>.md` for the coming year; `rise.json` is untouched,
+and the report says at the top that it was asked for a year `rise.json` is not at yet, so its
+candidate section still describes the previous rise. Nothing is published until a person pins the
+numbers in `rise.json` and merges.
 A pull request opened with the workflow's own token does not trigger `ci.yml`; the pinning
 commit pushed to that branch does. GitHub disables a schedule after 60 days without commits —
 if nothing has run by early March, `gh workflow run update` starts it (`-f force=true` opens a
@@ -169,13 +176,18 @@ Pin by hand, in this order (the same list is in `.github/PULL_REQUEST_TEMPLATE/u
    file`, and privatehealth.gov.au's own list.
 5. `npm run build && npm run serve` and read the dates in all seven languages (`?lang=ko`,
    `zh`, `ja`, `vi`, `es`, `fr`): rise date, both snapshot dates, the footer build line.
-6. Update the numbers in this README with the same hedged wording.
-7. `npm run check && npm run build && npm test && npm run smoke` without `--candidate`, push,
+6. Rewrite the rebate sentence in `footer2_html` — the one string that still names a year and
+   two rebate percentages — in `site/strings.js` and all six `site/strings.<lang>.json`, then
+   `node src/i18n.mjs`. `npm run smoke` without `CANDIDATE` fails while any string still carries
+   an earlier year (in candidate mode it only warns, so the automated PR can open first).
+7. Update the numbers in this README with the same hedged wording.
+8. `npm run check && npm run build && npm test && npm run smoke` without `--candidate`, push,
    let `ci.yml` run strict, merge; `deploy` follows.
 
-If a file changes under a name already recorded, `discover` reports it as republished and
-`fetch` stops on the hash mismatch; `node src/discover.mjs --refresh "<name>"` is the one way
-to accept that. If a download redirects to a host outside `rise.json` `downloadHosts`, fetch
+If a file changes under a name already recorded, `discover` reports it as republished: the
+scheduled `propose` job does not run for that alone (the run shows a warning instead), and `fetch`
+stops on the hash mismatch whenever it has to download that file again;
+`node src/discover.mjs --refresh "<name>"` is the one way to accept that. If a download redirects to a host outside `rise.json` `downloadHosts`, fetch
 refuses it; `node src/discover.mjs --probe "<name>"` prints the redirect chain so the host can be
 added on purpose.
 
@@ -192,12 +204,16 @@ one JSON file. No framework, no build step for the site, no network requests aft
 page loads, no cookies, no analytics, no accounts. Selection lives in the URL hash as a
 product index so a result is linkable in any language. Deploys to any static host.
 
-The page carries a Content-Security-Policy meta: no inline styles or scripts except the
-theme script, which runs before first paint and is allowed by its hash
-(`node src/csp-check.mjs` prints the corrected meta when that block changes). `index.json`
-is fetched once with `?v=<build version>`, so a new build is never read from an old cache,
-and the footer shows the data file's build time and version. Dates in the UI are formatted
-per language from the data file, so a new year needs no string edits.
+The page carries a Content-Security-Policy meta: no inline style attributes or scripts except
+two hashed blocks — the stylesheet and the theme script, which runs before first paint
+(`node src/csp-check.mjs` prints the corrected meta when either block changes). `index.json`
+is fetched once with `?v=<build version>`, so a new build is never read from an old cache; if
+a cached `app.js` ever meets a data file of another schema, the page re-fetches its three
+scripts past the cache and reloads once. The footer shows the data file's build time and
+version. Dates in the UI are formatted per language from the data file, so a new year needs no
+string edits for them; the one year-specific sentence left is the rebate note in
+`footer2_html` (year and percentages), which `npm run smoke` flags until it is rewritten in all
+seven languages.
 
 Seven languages: English, 한국어, 中文, 日本語, Tiếng Việt, Español, Français. Picked from
 `?lang=xx`, then the saved choice, then the browser language. The UI is translated;

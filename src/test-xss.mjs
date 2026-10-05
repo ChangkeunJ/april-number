@@ -25,7 +25,8 @@ export function syntheticIndex() {
   const whos = ['2|0|', '1|1|', 'constructor|1|', '2|0|Child,Student', '__proto__|0|', '1|0|NonStudent']
   const covers = ['1111000011', '1100000000', '<svg onload=alert(1)>']
   const waivers = ['Dependents,Accidents', 'Accidents', 'constructor']
-  const waits = ['{"SubAcute":"2m","PreExisting":"12m"}', '{"__proto__":"12m","Other":5,"PregnancyBirth":"12m"}', 'not json', '{"constructor":"2d"}']
+  // waits[4]: 대문자 단위(M → unit_m)와 모르는 단위(w → 원문 "3w"; 번역 키 unit_w 가 새면 안 된다)
+  const waits = ['{"SubAcute":"2m","PreExisting":"12m"}', '{"__proto__":"12m","Other":5,"PregnancyBirth":"12m"}', 'not json', '{"constructor":"2d"}', '{"SubAcute":"12M","PreExisting":"12m","Other":"3w"}']
   const corpText = ['<script>alert(1)</script>', 'Members of X Pty Ltd & their families only']
   const funds = withProto({ AAA: 'Safe Fund', BBB: 'Other Fund', MYO: 'Top Band Fund', ACA: 'Restricted Insurer', NHB: 'Members Only Fund', constructor: '"\'<>&' }, 'Proto Fund')
 
@@ -42,8 +43,8 @@ export function syntheticIndex() {
   const products = [
     // 0: 적대적 상품. 기금 코드 'constructor', 커버 서명 'constructor|1|', 티어에 태그, javascript: URL, 잘못된 waits
     row({ fund: 'constructor', name: 0, who: 2, tier: '<b>Gold</b>', prem: 200, before: 184.33, hist: [150, null, 170, 184.33, 200], url: 0, waits: 1, cover: 2 }),
-    // 1: 같은 커버의 동료 — https 링크는 살아야 한다
-    row({ fund: 'AAA', name: 2, who: 2, prem: 190, before: 180, url: 1, waits: 0, cover: 2, waiv: 1 }),
+    // 1: 같은 커버의 동료 — https 링크는 살아야 한다; 대기 기간에 대문자 단위와 모르는 단위
+    row({ fund: 'AAA', name: 2, who: 2, prem: 190, before: 180, url: 1, waits: 4, cover: 2, waiv: 1 }),
     // 2: 기금 코드 '__proto__', data: URL 은 링크가 되면 안 된다
     row({ fund: '__proto__', name: 3, who: 2, prem: 210.1, before: 200, url: 2, waits: 2, cover: 2, copay: 'Limited', amb: null }),
     // 3: 법인 전용 동료 — 비교 표에서 빠진다
@@ -101,8 +102,12 @@ export function syntheticIndex() {
   }
 }
 
+// stale() 은 세 스크립트를 다시 받은 뒤에야 새로고침한다 — 그 사이 한 틱을 기다린다.
+export const settled = () => new Promise(r => setTimeout(r, 0))
+
 // smoke.mjs 도 쓰는 DOM 스텁. app.js 가 만지는 것만 있다. version.js 는 build 를 주면 그 값으로, 아니면 site 에 있을 때 읽어 BUILD 를 정의한다.
-// fetch 는 호출만 기록하고 끝나지 않는다. index 는 실제 로드 경로와 같은 applyIndex() 로 넣는다.
+// fetch 는 호출만 기록한다: index.json 은 끝나지 않고(테스트가 applyIndex 로 직접 넣는다), 그 밖의 URL(stale 의 스크립트 prefetch)은 바로 성공한다.
+// index 는 실제 로드 경로와 같은 applyIndex() 로 넣는다.
 export function makeDom({ D = null, site = 'site', build = undefined } = {}) {
   const els = {}
   const mk = (id) => ({ id, innerHTML: '', textContent: '', value: '', disabled: false, onchange: null, dataset: {}, content: '' })
@@ -115,7 +120,7 @@ export function makeDom({ D = null, site = 'site', build = undefined } = {}) {
     localStorage: { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v }, removeItem: k => { delete store[k] } },
     sessionStorage: { getItem: k => session[k] ?? null, setItem: (k, v) => { session[k] = v }, removeItem: k => { delete session[k] } },
     navigator: { language: 'en-AU' },
-    fetch: (u, o) => { fetched.push([u, o]); return new Promise(() => {}) },
+    fetch: (u, o) => { fetched.push([u, o]); return /^index\.json(\?|$)/.test(String(u)) ? new Promise(() => {}) : Promise.resolve({ ok: true }) },
     URL, URLSearchParams,
     console,
   })
@@ -136,7 +141,7 @@ export function emitSite(dir, site = 'site') {
   return dir
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2)
   const site = args.includes('--site') ? args[args.indexOf('--site') + 1] : 'site'
   if (args.includes('--emit')) { console.log(emitSite(args[args.indexOf('--emit') + 1], site)); return }
@@ -148,8 +153,10 @@ function main() {
   let bad = 0
   const fail = (msg) => { console.log('  ✗ ' + msg); bad++ }
   const mustHave = (h, s, why) => { if (!h.includes(s)) fail(`${why}: "${s}" 가 없다`) }
-  const mustNot = (h, s, why) => { if (h.includes(s)) fail(`${why}: "${s}" 가 있다`) }
-  const NEVER = ['<img', '<script', 'javascript:', 'function Object', 'function Array', '[object Object]', 'undefined', 'NaN', '<b>', '<svg onload', 'data:text/html']
+  const mustNot = (h, s, why) => { if (s instanceof RegExp ? s.test(h) : h.includes(s)) fail(`${why}: "${s}" 가 있다`) }
+  // 맨 'null'(money() 가 null 을 돌려주던 때 'listed at null' 이 찍혔다)과 그대로 새는 번역 키(unit_M 등)는 정규식으로 잡는다.
+  const NEVER = ['<img', '<script', 'javascript:', 'function Object', 'function Array', '[object Object]', 'undefined', 'NaN', '<b>', '<svg onload', 'data:text/html',
+                 /(^|[\s>$(])null(?=[\s<,.)]|$)/, /\b(unit_[A-Za-z]|[a-z0-9_]+_(html|big))\b/]
 
   // 상품 선택 → render. 해시 경로와 같은 함수를 직접 밟는다.
   const open = (i) => {
@@ -190,6 +197,8 @@ function main() {
     mustHave(h, 'By tier as classified in the 5 April 2026 file', 'tiers_html 의 {after_date}')
     mustHave(h, 'Pre-existing', 'waits: 정상 키')
     mustHave(h, '12 months', 'waits: 정상 값')
+    mustHave(h, 'Sub-acute 12 months', 'waits: 대문자 단위 "12M" 도 unit_m 으로')
+    mustHave(h, 'Other 3w', 'waits: 모르는 단위는 원문 그대로 (번역 키가 아니라)')
     mustHave(h, 'class="first"', 'section 클래스')
     mustHave(h, '<rect width="', '분포 막대는 SVG rect')
     mustNot(h, 'style=', 'inline style 없음')
@@ -262,16 +271,21 @@ function main() {
   }
   // stale: meta.schema 가 다르면 안내문을 그리고 한 번만 새로고침한다. 예외는 없다.
   {
-    const { ctx: c5, els: e5, reloads, session } = makeDom({ site, build: syntheticBuild() })
+    const { ctx: c5, els: e5, reloads, session, fetched: f5 } = makeDom({ site, build: syntheticBuild() })
     c5.__S = { ...D, meta: { ...D.meta, schema: 999 } }
     let r
     try { r = vm.runInContext('applyIndex(__S)', c5) } catch (e) { fail(`stale: 예외 ${e.message}`) }
     if (r !== false) fail('stale: applyIndex 가 false 가 아니다')
     if (!e5.out.innerHTML.includes(c5.STR.en.stale_html)) fail(`stale: 안내문 없음 — ${e5.out.innerHTML}`)
+    await settled()
     if (reloads.n !== 1) fail(`stale: reload ${reloads.n}번`)
+    // 새로고침 전에 세 스크립트를 cache:'reload' 로 다시 받는다 — 보통 새로고침은 캐시된 app.js 를 그대로 쓰기 때문이다
+    const pre = f5.slice(1).map(([u, o]) => `${u}:${o?.cache}`).sort()
+    if (pre.join() !== 'app.js:reload,strings.js:reload,version.js:reload') fail(`stale: 스크립트 prefetch — ${pre.join(' ')}`)
     if (session['reloaded-abc123def456'] !== '1') fail('stale: sessionStorage 가드')
     if (vm.runInContext('D', c5) !== null) fail('stale: D 가 대입됐다')
     try { vm.runInContext('applyIndex(__S)', c5) } catch (e) { fail(`stale 2회: 예외 ${e.message}`) }
+    await settled()
     if (reloads.n !== 1) fail(`stale: 두 번째에도 reload (${reloads.n})`)
     if (!e5.out.innerHTML.includes(c5.STR.en.stale_html)) fail('stale: 두 번째 안내문 없음')
     for (const badIdx of [null, {}, { ...D, meta: null }, { ...D, products: {} }]) {
@@ -289,7 +303,7 @@ function main() {
     if (r2 !== 'x — listed at {m}') fail(`t() 빠진 변수: ${r2}`)
     if (vm.runInContext(`t('no_such_key')`, ctx) !== 'no_such_key') fail('t() 모르는 키')
     if (vm.runInContext(`esc("<a href='x'>&\\"")`, ctx) !== '&lt;a href=&#39;x&#39;&gt;&amp;&quot;') fail('esc()')
-    for (const [expr, want] of [[`num('abc')`, '—'], [`num(null)`, '—'], [`money(undefined)`, null], [`money('x')`, '—'], [`pctStr(NaN)`, '—'], [`pctStr(2)`, '+2.00%'], [`num(1234)`, '1,234']]) {
+    for (const [expr, want] of [[`num('abc')`, '—'], [`num(null)`, '—'], [`money(undefined)`, '—'], [`money(null)`, '—'], [`money('')`, '—'], [`money('x')`, '—'], [`money(12.5)`, '$12.50'], [`pctStr(NaN)`, '—'], [`pctStr(2)`, '+2.00%'], [`num(1234)`, '1,234']]) {
       const got = vm.runInContext(expr, ctx); if (got !== want) fail(`${expr} → ${got}`)
     }
   }
@@ -356,4 +370,4 @@ function main() {
   process.exit(bad ? 1 : 0)
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main()
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e); process.exit(1) })

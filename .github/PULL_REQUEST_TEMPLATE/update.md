@@ -14,6 +14,7 @@ Nothing is published until every box is ticked, `rise.json` is pinned and this P
 - [ ] `expected` block from `reports/rise-YYYY.md` pasted into `rise.json` after the hand check — including `excludedMin`
 - [ ] Restricted-fund set confirmed: `rise.json` `restrictedFunds` equals the Funds file's `<FundType>Restricted</FundType>` codes (the build log says `restricted funds: N codes match the Funds file`) and privatehealth.gov.au/dynamic/insurer/restricted
 - [ ] Dates read correctly in all seven languages on a local preview (`npm run build && npm run serve`, then `?lang=en`, `ko`, `zh`, `ja`, `vi`, `es`, `fr`): rise date, both snapshot dates, footer build line
+- [ ] The rebate sentence in `footer2_html` rewritten for YYYY in `site/strings.js` and all six `site/strings.<lang>.json` (the date, the two rebate percentages and the derived gap — or, if the rebate did not change, the sentence rewritten to say so), then `node src/i18n.mjs`; `npm run smoke` without `CANDIDATE` fails while any string still names an earlier year
 - [ ] README prose numbers updated (headline paragraph, Method, What it will not tell you) with the same hedged wording — never firmer, never a recommendation
 - [ ] `npm run check && npm run build && npm test && npm run smoke` pass locally without `--candidate` / `CANDIDATE=1`
 - [ ] `reports/rise-YYYY.md` and `reports/candidate-YYYY.json` committed as the audit trail for YYYY

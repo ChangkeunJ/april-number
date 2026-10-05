@@ -88,10 +88,12 @@ function builtVars() {
 }
 // 데이터 열거값(XSD 고정값)의 표시명. 표에 없는 값은 원문 그대로.
 const tv = (prefix, v) => own(STR[LANG], prefix + v) ?? own(STR.en, prefix + v) ?? v
+// 대기 기간 "12m" → "12 months". 단위 글자는 대소문자를 가리지 않고, 표에 없는 단위는 번역 키가 아니라 원문을 보여 준다.
+const unitStr = (v) => { const key = 'unit_' + v.slice(-1).toLowerCase(); return (own(STR[LANG], key) ?? own(STR.en, key)) != null ? t(key, { n: v.slice(0, -1) }) : v }
 // 숫자 표시. 숫자가 아니거나 비어 있으면 — 로 둔다 (Number(null) 은 0 이라 따로 거른다). 화면에 NaN 이나 undefined 가 찍히면 안 된다.
 const toNum = (v) => (v == null || v === '') ? NaN : Number(v)
 const num = (n) => { n = toNum(n); return Number.isFinite(n) ? n.toLocaleString(STR[LANG]?._locale ?? 'en-AU') : '—' }
-const money = (n) => { if (n == null) return null; n = Number(n); return Number.isFinite(n) ? '$' + n.toFixed(2) : '—' }
+const money = (n) => { n = toNum(n); return Number.isFinite(n) ? '$' + n.toFixed(2) : '—' }   // null 을 돌려주면 'listed at null' 이 찍힌다
 const pctStr = (n) => { n = toNum(n); return Number.isFinite(n) ? (n > 0 ? '+' : '') + n.toFixed(2) + '%' : '—' }
 const dec = (n) => { n = toNum(n); return Number.isFinite(n) ? String(n) : '—' }   // 중앙값·발표 평균처럼 그대로 보여 주는 소수
 const fin = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : null   // 데이터의 숫자 칸. 숫자가 아니면 없는 값으로 본다
@@ -276,7 +278,7 @@ const DIFFS = [
     try { w = JSON.parse(own(D.s.waits, p[F.waits]) || '{}') } catch {}
     if (!w || typeof w !== 'object' || Array.isArray(w)) w = {}
     return Object.entries(w).filter(([, v]) => typeof v === 'string' && v.length > 1)
-      .map(([k, v]) => `${tv('wait_', k)} ${t('unit_' + v.slice(-1), { n: v.slice(0, -1) })}`).join(', ') || t('v_not_stated')
+      .map(([k, v]) => `${tv('wait_', k)} ${unitStr(v)}`).join(', ') || t('v_not_stated')
   }],
 ]
 
@@ -393,7 +395,9 @@ function stale() {
     again = seen
   } catch {}
   $('out').innerHTML = `<p class="sub">${t('stale_html')}</p>`
-  if (!again) location.reload()
+  // 새로고침만으로는 안 된다: 브라우저의 보통 새로고침은 문서만 재검증하고 스크립트는 캐시(Pages 는 max-age=600)에서
+  // 다시 쓴다. 세 스크립트를 cache:'reload' 로 먼저 받아 캐시를 갈아 끼운 뒤에 새로고침해야 새 코드가 올라온다.
+  if (!again) Promise.all(['app.js', 'strings.js', 'version.js'].map(u => fetch(u, { cache: 'reload' }).catch(() => {}))).then(() => location.reload())
 }
 // index.json 을 받아 화면을 연다. fetch 의 .then 이 부르고, smoke/test-xss 는 네트워크 없이 직접 부른다.
 function applyIndex(j) {

@@ -3,7 +3,7 @@
 // 환경변수를 config.mjs 보다 먼저 세워야 하므로 import 는 전부 동적이다 (test-unit.mjs 와 같은 틀).
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, copyFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync, copyFileSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
@@ -12,6 +12,14 @@ import { fileURLToPath } from 'node:url'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const FIX = join(ROOT, 'test', 'fixtures')
 const TMP = mkdtempSync(join(tmpdir(), 'april-update-'))
+// 임시 디렉터리는 어떻게 끝나든 지운다: 아래 동적 import 가 죽어도, 그룹 밖에서 예외가 나도, Ctrl-C 로 끊어도.
+process.on('exit', () => rmSync(TMP, { recursive: true, force: true }))
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(1))
+// 저장소의 snapshots.json 과 reports/ 는 (내용이 무엇이든, reports/ 가 있든 없든) 손대지 않아야 한다 — 전후를 비교한다.
+const treeStamp = (d) => (existsSync(d) ? readdirSync(d).sort().map(f => { const s = statSync(join(d, f)); return `${f}:${s.size}:${s.mtimeMs}` }).join('\n') : null)
+const REPO_REPORTS = join(ROOT, 'reports')
+const repoReportsBefore = treeStamp(REPO_REPORTS)
+const committedManifest = readFileSync(join(ROOT, 'snapshots.json'), 'utf8')
 const RISE = join(TMP, 'rise.json'), MANIFEST = join(TMP, 'snapshots.json'), REPORTS = join(TMP, 'reports')
 copyFileSync(join(FIX, 'rise.json'), RISE)   // riseYear 2026, history [April 2025, April 2026], expected 2026 pinned
 const ENV = { RISE_FILE: RISE, DATA_DIR: join(FIX, 'data'), MANIFEST_FILE: MANIFEST, REPORTS_DIR: REPORTS }
@@ -319,7 +327,7 @@ await group('discover: CLI child process — --help, --refresh and bad usage nee
   assert.equal(r.code, 1); assert.match(r.stderr, /unknown argument/)
   r = runCli('discover.mjs', { args: ['--github-output'], env: { GITHUB_OUTPUT: '' } })
   assert.equal(r.code, 1); assert.match(r.stderr, /needs \$GITHUB_OUTPUT/)
-  assert.equal(readFileSync(join(ROOT, 'snapshots.json'), 'utf8'), '{\n  "package": "8ab10b1f-6eac-423c-abc5-bbffc31b216c",\n  "resources": {}\n}\n', 'the committed manifest is never touched')
+  assert.equal(readFileSync(join(ROOT, 'snapshots.json'), 'utf8'), committedManifest, 'the committed manifest is never touched (whatever it holds)')
   resetFiles()
 })
 
@@ -352,19 +360,19 @@ await group('report: buildReport renders every section from synthetic inputs; th
   assert.doesNotThrow(() => validateRise(Object.assign(structuredClone(rise), { expected: j })), 'the block is a valid expected entry')
   assert.ok(md.includes('| hospital priced (both months) | 31 | 31 | 0 |'), 'comparison row')
   assert.ok(md.includes('| hospital median | 4.50% | 4.50% | 0.00 pts |'), 'zero delta has no sign')
-  assert.ok(md.includes('| top band concentration | EEE 2 of 3 | EEE 2 of 3 | — |'))
-  assert.ok(md.includes('| March 2027 | before (baseline) | stub — not fetched yet |'), 'stub row')
-  assert.ok(md.includes('| April 2027 | after (this rise) | 06-Apr-2027 |') && md.includes('| April 2025 | history point | 02-Apr-2025 |') && md.includes('| March 2026 | recorded, not used by rise.json yet |'))
-  assert.ok(md.includes('- Hospital Open 06-Apr-2027.xml (10 bytes) `' + 'b'.repeat(64) + '`'), 'member hashes')
+  assert.ok(md.includes('| top band concentration | `EEE` 2 of 3 | `EEE` 2 of 3 | — |'))
+  assert.ok(md.includes('| `March 2027` | before (baseline) | stub — not fetched yet | `2027-03-02T00:00:00.000000` | 1 | — |'), 'stub row')
+  assert.ok(md.includes('| `April 2027` | after (this rise) | `06-Apr-2027` |') && md.includes('| `April 2025` | history point | `02-Apr-2025` |') && md.includes('| `March 2026` | recorded, not used by rise.json yet |'))
+  assert.ok(md.includes('- `Hospital Open 06-Apr-2027.xml` (10 bytes) `' + 'b'.repeat(64) + '`'), 'member hashes')
   assert.ok(md.includes('| announcedAverage | null — fill from the PHI circular |') && md.includes('| links.circular | null — fill from the PHI circular |'))
   assert.ok(md.includes('| expected[2027] in rise.json | absent — candidate mode'))
   assert.ok(md.includes('Licence: `cc-by` — verified by fetch'))
-  assert.ok(md.includes('Rows by SchemaVersion (both hospital files): 3.1 × 66. Drift from 3.1: 0 rows.'))
+  assert.ok(md.includes('Rows by SchemaVersion (both hospital files): `3.1` × 66. Drift from 3.1: 0 rows.'))
   assert.ok(md.includes('14 funds in the Funds file'), 'fund count')
   const top = md.split('### Ten funds')[1].split('\n').filter(l => /^\| `[A-Z]{3}` \|/.test(l))
   assert.ok(top.length >= 3 && top.length <= 10, `top table rows ${top.length}`); assert.ok(top[0].includes('`EEE`'), 'EEE has the two ≥20% rises')
-  assert.ok(md.includes('Coastal Care &lt;Mutual&gt;') && !md.includes('<Mutual>'), 'fund names are escaped for markdown')
-  assert.ok(md.includes('- `ACA` Restricted Fund ACA'), 'restricted codes with names')
+  assert.ok(md.includes('`Coastal Care <Mutual>`') && !md.replace(/`[^`\n]*`/g, '').includes('<Mutual>'), 'fund names are code spans: literal, never HTML or markdown')
+  assert.ok(md.includes('- `ACA` `Restricted Fund ACA`'), 'restricted codes with names')
   assert.ok(md.includes('index.json `meta.restrictedFunds` is the same set.'))
   assert.ok(md.includes('- [ ]') && md.includes('reports/rise-2027.md') && !md.includes('YYYY'), 'checklist embedded with the year filled in')
   assert.ok(!md.includes('<!--'), 'template comment stripped')
@@ -383,7 +391,7 @@ await group('report: missing inputs are stated, pinned years are compared, check
   assert.ok(md.includes('| index.json | missing — run `CANDIDATE=1 npm run build` |') && md.includes('| candidate json | missing —'))
   assert.ok(md.includes('No block: neither candidate json nor index.json was available.'))
   assert.ok(md.includes('2027 figures are missing (see above), so there is nothing to compare against 2026.'))
-  assert.ok(md.includes('| March 2027 | before (baseline) | — | — | — | not in snapshots.json'))
+  assert.ok(md.includes('| `March 2027` | before (baseline) | — | — | — | not in snapshots.json'))
   assert.ok(md.includes('index.json missing — no fund table.') && md.includes('Not available — `npm run check -- --candidate` records it'))
   assert.ok(md.includes('`.github/PULL_REQUEST_TEMPLATE/update.md` not found'))
   // 전년 블록이 없으면 그렇다고 말한다; 이미 pin 된 해는 빌드 결과와 대조한다
@@ -409,7 +417,19 @@ await group('report: missing inputs are stated, pinned years are compared, check
   assert.ok(report.buildReport({ year: 2026, rise: fixtureRise, manifest: freshManifest(), index: withFile, template: '' }).includes('Funds file `<FundType>Restricted</FundType>`: same 9 codes.'))
   withFile.meta.restrictedInFile = ['ZZZ']
   assert.ok(report.buildReport({ year: 2026, rise: fixtureRise, manifest: freshManifest(), index: withFile, template: '' }).includes('differs: `ZZZ` — a strict build fails'))
-  assert.equal(report.md('a|b<c>`d\\e\nf'), 'a\\|b&lt;c&gt;’d\\\\e f')
+  // md(): 코드 스팬. 파이프만 \| 로, 백틱은 ’ 로, 줄바꿈은 공백으로; 꺾쇠·역슬래시는 코드 스팬 안에서 글자 그대로라 손대지 않는다.
+  assert.equal(report.md('a|b<c>`d\\e\nf'), '`a\\|b<c>’d\\e f`')
+  assert.equal(report.md(''), '—'); assert.equal(report.md(null), '—')
+  // 마크다운 링크·이미지·강조·@멘션·"fixes #N" 이 든 데이터 값(CKAN 문자열, 기금명)은 코드 스팬 밖으로 나오지 않는다 —
+  // GitHub 는 코드 스팬 안에서 링크를 만들지도, 멘션 알림을 보내지도, 이슈를 닫지도 않는다. 역슬래시 이스케이프는 뒤의 둘을 못 막는다.
+  const hostileName = 'Fund ![pixel](https://evil.example/f.png) @octocat fixes #2 [site](https://evil.example) **bold**'
+  const hostileLm = '2026-04-20 **bold** ![i](https://evil.example/q.png) @octocat closes #3 <script>x</script>'
+  const hostile = structuredClone(INDEX); hostile.funds.AAA = hostileName
+  const hostileMan = freshManifest(); hostileMan.resources['April 2026'].last_modified = hostileLm; hostileMan.resources['April 2026'].url = 'https://evil.example/[x](y) @octocat'
+  md = report.buildReport({ year: 2026, rise: fixtureRise, manifest: hostileMan, candidate: { mode: 'candidate **x** @octocat', stamps: { before: '![a](b)', after: '05-Apr-2026' }, hospital: { open: 32, priced: 31, median: 4.5, bands: [2, 15, 7, 3, 1, 3] } }, index: hostile, template: '' })
+  assert.ok(md.includes('`' + hostileName + '`') && md.includes('`' + hostileLm + '`'), 'hostile values kept whole inside code spans')
+  const outside = md.replace(/`[^`\n]*`/g, '')
+  assert.ok(!/@octocat|#[23]\b|!\[|\]\(|\*\*bold\*\*|<script>|evil\.example/.test(outside), `hostile text outside a code span: ${outside.match(/.{0,40}(@octocat|#[23]\b|!\[|\]\(|\*\*bold\*\*|<script>|evil\.example).{0,40}/)?.[0]}`)
 })
 
 await group('report: CLI end to end on a fixture build (check --candidate → build → report), child processes', () => {
@@ -427,10 +447,18 @@ await group('report: CLI end to end on a fixture build (check --candidate → bu
   assert.ok(md.startsWith('# Rise 2026: PHIO snapshot report\n'))
   const j = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(md)[1])
   assert.deepEqual(j['2026'].hospital, loadRise(join(FIX, 'rise.json')).expected['2026'].hospital); assert.equal(j['2026'].products, 43)
-  assert.ok(md.includes('| candidate json | generated ') && md.includes('mode candidate, stamps 01-Mar-2026 / 05-Apr-2026'))
-  assert.ok(md.includes('Rows by SchemaVersion (both hospital files): 3.1 × 66. Drift from 3.1: 0 rows.'))
+  assert.ok(md.includes('| candidate json | mode `candidate`, stamps `01-Mar-2026` / `05-Apr-2026` |'))
+  assert.ok(md.includes('Rows by SchemaVersion (both hospital files): `3.1` × 66. Drift from 3.1: 0 rows.'))
   assert.ok(md.includes('- [ ]') && md.includes('reports/rise-2026.md'), 'checklist from .github/PULL_REQUEST_TEMPLATE/update.md')
-  assert.ok(md.includes('| index.json | built 20') && md.includes('schema '), 'meta line')
+  assert.ok(/\| index\.json \| version `[0-9a-f]{12}`, schema `2`, snapshots `2026-03-01` → `2026-04-05` \|/.test(md), 'meta line')
+  // 같은 입력이면 같은 보고서·같은 candidate json (시각 없음) — update.yml 의 "변경 없음 → 커밋 없음" 판정이 이것에 기댄다
+  const cand1 = readFileSync(join(REPORTS, 'candidate-2026.json'), 'utf8')
+  assert.ok(!/generated|built/.test(md.split('\n## Snapshots')[0]) && !/"generated"/.test(cand1), 'no timestamps in the committed files')
+  r = runCli('check.mjs', { cwd, env: { RISE_FILE: noExpFile }, args: ['--candidate'] }); assert.equal(r.code, 0, r.stderr)
+  r = runCli('build.mjs', { cwd, env: { RISE_FILE: noExpFile, CANDIDATE: '1' } }); assert.equal(r.code, 0, r.stderr)
+  r = runCli('report.mjs', { cwd, env: { RISE_FILE: noExpFile } }); assert.equal(r.code, 0, r.stderr)
+  assert.equal(readFileSync(join(REPORTS, 'candidate-2026.json'), 'utf8'), cand1, 'candidate json byte-identical on a second run')
+  assert.equal(readFileSync(join(REPORTS, 'rise-2026.md'), 'utf8'), md, 'report byte-identical on a second run')
   // --out 과 --year: 없는 해의 candidate 는 stderr 로 말하고 그래도 쓴다
   const out = join(TMP, 'custom', 'r.md')
   r = runCli('report.mjs', { cwd, env: { RISE_FILE: noExpFile }, args: ['--year', '2027', '--out', out] })
@@ -441,10 +469,10 @@ await group('report: CLI end to end on a fixture build (check --candidate → bu
   assert.equal(runCli('report.mjs', { cwd, args: ['--help'] }).code, 0)
   r = runCli('report.mjs', { cwd, args: ['--year', 'abc'] }); assert.equal(r.code, 1); assert.match(r.stderr, /--year must be an integer/)
   r = runCli('report.mjs', { cwd, args: ['--what'] }); assert.equal(r.code, 1); assert.match(r.stderr, /unknown argument/)
-  assert.ok(!existsSync(join(ROOT, 'reports')), 'fixture runs must not write into the repo')
+  assert.equal(treeStamp(REPO_REPORTS), repoReportsBefore, 'fixture runs must not write into the repo (reports/ unchanged, whether or not it exists)')
   assert.ok(statSync(join(REPORTS, 'rise-2026.md')).size > 2000)
 })
 
-rmSync(TMP, { recursive: true, force: true })
+// TMP 는 process.on('exit') 가 지운다 (위).
 if (failed) { console.log(`\n${failed} group(s) failed`); process.exit(1) }
 console.log('\nOK — discover/report tests passed (no network)')

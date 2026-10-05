@@ -17,11 +17,16 @@ export const TEMPLATE_FILE = join(ROOT, '.github', 'PULL_REQUEST_TEMPLATE', 'upd
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const BANDS = ['fell (<0%)', '0–5%', '5–10%', '10–15%', '15–20%', '20%+']
 
-// 표 셀에 데이터 값(기금명 등)을 넣을 때. PR 본문은 마크다운으로 렌더되므로 HTML 과 파이프를 죽인다.
-export const md = (s) => String(s ?? '').replace(/[|<>`\\]/g, c => ({ '|': '\\|', '<': '&lt;', '>': '&gt;', '`': '’', '\\': '\\\\' }[c])).replace(/\s*\n\s*/g, ' ')
+// 데이터 값(기금명·CKAN 문자열·스탬프 등)은 코드 스팬으로 넣는다. PR 본문은 마크다운으로 렌더되는데, 코드 스팬 안에서는
+// GitHub 가 링크·이미지·강조·HTML 을 해석하지 않고 @멘션과 #이슈 참조(closes #N)도 만들지 않는다 — 역슬래시 이스케이프는
+// 뒤의 둘을 못 막는다(렌더 뒤 텍스트에서 다시 찾는다). 코드 스팬 안에서도 표의 파이프는 \| 로, 백틱은 ’ 로, 줄바꿈은 공백으로.
+export const md = (s) => {
+  const t = String(s ?? '').replace(/\s*\n\s*/g, ' ').replace(/`/g, '’').replace(/\|/g, '\\|')
+  return t === '' ? '—' : '`' + t + '`'
+}
 const num = (n) => (typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('en-US') : '—')
 const pctf = (n) => (typeof n === 'number' && Number.isFinite(n) ? `${n.toFixed(2)}%` : '—')
-const code = (s) => (s == null || s === '' ? '—' : '`' + String(s).replace(/`/g, '’') + '`')
+const code = md
 const nameYear = (n) => Number(String(n).split(' ')[1]) || 0
 const nameMonth = (n) => MONTHS.indexOf(String(n).split(' ')[0])
 const byDate = (a, b) => (nameYear(a) - nameYear(b)) || (nameMonth(a) - nameMonth(b))
@@ -124,11 +129,12 @@ export function buildReport({ year, rise, manifest, candidate = null, index = nu
   L.push(`| announcedAverage | ${rise.announcedAverage == null ? 'null — fill from the PHI circular' : pctf(rise.announcedAverage)} |`)
   L.push(`| links.circular | ${rise.links?.circular ? md(rise.links.circular) : 'null — fill from the PHI circular'} |`)
   L.push(`| expected[${y}] in rise.json | ${pinned ? 'pinned' : 'absent — candidate mode; nothing deploys until it is pinned'} |`)
+  // 빌드 시각은 싣지 않는다: 같은 입력이면 같은 보고서가 나와야 update.yml 의 "변경 없음 → 커밋 없음" 판정이 선다 (시각은 커밋이 안다).
   if (index?.meta) {
     const m = index.meta
-    L.push(`| index.json | built ${md(m.built ?? '?')}, version ${code(m.version ?? '?')}, schema ${md(m.schema ?? '?')}, snapshots ${md(m.snapshots?.before ?? '?')} → ${md(m.snapshots?.after ?? '?')} |`)
+    L.push(`| index.json | version ${code(m.version ?? '?')}, schema ${md(m.schema ?? '?')}, snapshots ${md(m.snapshots?.before ?? '?')} → ${md(m.snapshots?.after ?? '?')} |`)
   } else L.push(`| index.json | missing — run \`CANDIDATE=1 npm run build\` |`)
-  if (candidate) L.push(`| candidate json | generated ${md(candidate.generated ?? '?')}, mode ${md(candidate.mode ?? '?')}, stamps ${md(candidate.stamps?.before ?? '?')} / ${md(candidate.stamps?.after ?? '?')} |`)
+  if (candidate) L.push(`| candidate json | mode ${md(candidate.mode ?? '?')}, stamps ${md(candidate.stamps?.before ?? '?')} / ${md(candidate.stamps?.after ?? '?')} |`)
   else L.push(`| candidate json | missing — \`npm run check -- --candidate\` writes it when no expected block exists for ${y} |`)
 
   // ---- 스냅샷 메타데이터 ----
@@ -140,7 +146,7 @@ export function buildReport({ year, rise, manifest, candidate = null, index = nu
   const inManifest = new Set(entries.map(([n]) => n))
   L.push(`| snapshot | role | stamp | CKAN last_modified | CKAN size | zip sha256 |`, `|---|---|---|---|---|---|`)
   for (const [n, e] of entries) {
-    L.push(`| ${md(n)} | ${used.get(n) ?? 'recorded, not used by rise.json yet'} | ${md(e.stamp ?? (e.members ? '?' : 'stub — not fetched yet'))} | ${md(e.last_modified ?? '—')} | ${num(e.size)} | ${code(e.sha256)} |`)
+    L.push(`| ${md(n)} | ${used.get(n) ?? 'recorded, not used by rise.json yet'} | ${e.stamp ? md(e.stamp) : e.members ? '?' : 'stub — not fetched yet'} | ${e.last_modified ? md(e.last_modified) : '—'} | ${num(e.size)} | ${code(e.sha256)} |`)
   }
   for (const n of [...used.keys()].filter(n => !inManifest.has(n))) L.push(`| ${md(n)} | ${used.get(n)} | — | — | — | not in snapshots.json — \`npm run fetch\` has not recorded it |`)
   const withMembers = entries.filter(([, e]) => e.members && typeof e.members === 'object')
@@ -152,7 +158,7 @@ export function buildReport({ year, rise, manifest, candidate = null, index = nu
     }
   }
   const lic = typeof manifest.licence === 'string' ? manifest.licence : typeof manifest.license_id === 'string' ? manifest.license_id : null
-  L.push('', `Licence: ${lic ? `${md(lic)} (recorded in snapshots.json)` : '`cc-by` — verified by fetch (`validatePackage` stops the pipeline if `license_id` changes)'}${index?.meta?.licence ? `; index.json carries "${md(index.meta.licence)}"` : ''}.`)
+  L.push('', `Licence: ${lic ? `${md(lic)} (recorded in snapshots.json)` : '`cc-by` — verified by fetch (`validatePackage` stops the pipeline if `license_id` changes)'}${index?.meta?.licence ? `; index.json carries ${md(index.meta.licence)}` : ''}.`)
 
   // ---- 후보 expected 블록 ----
   H(`## Candidate \`expected\` block for ${y}`)
@@ -198,7 +204,7 @@ export function buildReport({ year, rise, manifest, candidate = null, index = nu
   L.push(`rise.json: ${a.map(code).join(', ')} (${a.length}).`)
   if (b) {
     L.push('', JSON.stringify(a) === JSON.stringify(b) ? 'index.json `meta.restrictedFunds` is the same set.' : `index.json \`meta.restrictedFunds\` differs: ${b.map(code).join(', ')}.`)
-    L.push('', a.map(c => `- ${code(c)} ${md(own(index.funds, c) ?? '(code not in this build’s Funds file)')}`).join('\n'))
+    L.push('', a.map(c => { const n = own(index.funds, c); return `- ${code(c)} ${n != null ? md(n) : '(code not in this build’s Funds file)'}` }).join('\n'))
   }
   const inFile = index?.meta?.restrictedInFile
   if (Array.isArray(inFile)) {

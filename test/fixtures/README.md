@@ -25,6 +25,10 @@ followed by `<FundName>`, plus `<FundType>Restricted</FundType>` (README "Method
     snapshot.zip       the four april-2026 members plus an extra "evil.sh" that must be ignored
     dup.zip            Hospital Open 05-Apr-2026.xml at the root and again under sub/ (the
                        "exactly one per kind" rule must reject it)
+    dashd.zip          the three XMLs under a "-dINJECTED/" prefix — an unzip option in
+                       disguise; extractSnapshot refuses it before running unzip
+    symlink.zip        Hospital and Combined as files, Funds as a symlink entry pointing at
+                       /etc/hostname — unzip restores it as a symlink; the lstat check refuses it
 
 ## Cases covered (Hospital, April 2026: 33 products, 32 open)
 
@@ -60,6 +64,9 @@ Created with the standard-library CLI (no dependency), from inside `data/april-2
     # dup.zip: from a staging dir holding the three XMLs and sub/Hospital Open 05-Apr-2026.xml
     python3 -m zipfile -c dup.zip 'Hospital Open 05-Apr-2026.xml' \
         'Combined Open 05-Apr-2026.xml' 'Funds 05-Apr-2026.xml' sub
+
+    # dashd.zip and symlink.zip: python3 -c with the zipfile module (writestr with a "-dINJECTED/"
+    # prefix; a ZipInfo whose external_attr is (S_IFLNK | 0o777) << 16 and whose data is the link target)
 
 `gen.mjs` runs the same commands. Size caps are tested by lowering `LIMITS` through
 options, not with oversized archives.

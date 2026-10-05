@@ -62,8 +62,9 @@ function parseProduct(s) {
 
   // 데이터 값이 키가 된다. 프로토타입 없는 객체라야 "__proto__" 같은 제목이 그냥 키로 남는다.
   const waits = Object.create(null)
+  // 단위는 첫 글자만 소문자로 ("Months"/"months" → m). 화면의 unit_m/unit_d 키가 대소문자를 타지 않게.
   for (const m of s.matchAll(/<WaitingPeriod Unit="([^"]+)"[^>]*Title="([^"]+)">(\d+)</g)) {
-    waits[m[2]] = `${m[3]}${m[1][0]}`
+    waits[m[2]] = `${m[3]}${m[1][0].toLowerCase()}`
   }
   const waivers = [...eBody.matchAll(/<Waiver>([^<]+)<\/Waiver>/g)].map(m => m[1]).sort()
 

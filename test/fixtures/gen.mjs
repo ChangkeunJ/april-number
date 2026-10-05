@@ -188,6 +188,26 @@ for (const snap of SNAPS) {
   cpSync(join(src, members[0]), join(dup, 'sub', members[0]))
   rmSync(join(HERE, 'dup.zip'), { force: true })
   execFileSync('python3', ['-m', 'zipfile', '-c', join(HERE, 'dup.zip'), ...members.slice(0, 3), 'sub'], { cwd: dup, stdio: 'pipe' })
+  // dashd.zip: 세 XML 의 멤버 이름이 "-dINJECTED/" 로 시작한다. unzip 은 '-' 로 시작하는 인자를 옵션으로 읽으므로(-d = 추출 위치)
+  // extractSnapshot 은 이런 이름을 추출 전에 거부해야 한다.
+  rmSync(join(HERE, 'dashd.zip'), { force: true })
+  execFileSync('python3', ['-c', [
+    'import sys, zipfile',
+    "z = zipfile.ZipFile(sys.argv[1], 'w')",
+    "for n in sys.argv[2:]: z.writestr('-dINJECTED/' + n, open(n, 'rb').read())",
+    'z.close()',
+  ].join('\n'), join(HERE, 'dashd.zip'), ...members.slice(0, 3)], { cwd: src, stdio: 'pipe' })
+  // symlink.zip: Hospital·Combined 는 보통 파일, Funds 는 /etc/hostname 을 가리키는 심링크 항목. unzip 은 이를 심링크로 복원하고
+  // stat/hash/read 는 전부 링크를 따라가므로 extractSnapshot 은 lstat 으로 잡아 거부해야 한다.
+  rmSync(join(HERE, 'symlink.zip'), { force: true })
+  execFileSync('python3', ['-c', [
+    'import sys, stat, zipfile',
+    "z = zipfile.ZipFile(sys.argv[1], 'w')",
+    'for n in sys.argv[3:]: z.write(n)',
+    'zi = zipfile.ZipInfo(sys.argv[2]); zi.external_attr = (stat.S_IFLNK | 0o777) << 16',
+    "z.writestr(zi, '/etc/hostname')",
+    'z.close()',
+  ].join('\n'), join(HERE, 'symlink.zip'), members[2], ...members.slice(0, 2)], { cwd: src, stdio: 'pipe' })
   rmSync(stage, { recursive: true, force: true })
 }
 console.log('fixtures written under', HERE)

@@ -54,6 +54,8 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: node src/smoke.mjs
+      # 올라가는 artifact 의 인라인 블록 해시를 같은 job 에서 한 번 더 본다 (unit job 도 보지만, 배포 직전의 바이트가 기준이다).
+      - run: node src/csp-check.mjs
       # master push에서만: 검증을 통과한 바로 그 site/를 Pages artifact로 올린다.
       - if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -61,8 +63,9 @@ jobs:
           path: site
 
   # 같은 run에서 올린 artifact만 배포한다. checkout·fetch 없음.
+  # unit 도 기다린다: csp-check·test-xss·strings-check 는 unit 에서 돌므로, test 만 기다리면 해시가 깨진 index.html 도 배포된다.
   deploy:
-    needs: test
+    needs: [unit, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 10

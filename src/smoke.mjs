@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import vm from 'node:vm'
 import { checkStrings } from './strings-check.mjs'
 import { F } from './columns.mjs'
-import { makeDom } from './test-xss.mjs'
+import { makeDom, settled } from './test-xss.mjs'
 
 const args = process.argv.slice(2)
 const site = args.includes('--site') ? args[args.indexOf('--site') + 1] : 'site'
@@ -35,8 +35,14 @@ const cases = [
 ]
 const banned = /\b(cheaper|cheapest|better|best|switch to|you should|we recommend)\b/i
 const probes = ['undefined', 'NaN', '[object Object]', '&amp;amp;', '$null', '{', 'style=', 'Invalid Date']
+// 정규식 프로브: 맨 'null'(money() 가 null 을 돌려주던 때 'listed at null' 이 찍혔다), 그대로 새는 번역 키(unit_M 등).
+const reProbes = [[/(^|[\s>$(])null(?=[\s<,.)]|$)/, 'null'], [/\b(unit_[A-Za-z]|[a-z0-9_]+_(html|big))\b/, '번역 키']]
 // 모든 결과 문장(changed/unchanged/nomatch, tiers)에 날짜가 들어가므로 어느 분기든 인상 연도 숫자가 보여야 한다.
 const riseYear = String(D.meta.riseYear)
+// 문구에 박힌 네 자리 연도는 인상 연도뿐이어야 한다. 날짜는 자리표시자로 채우므로 남은 것은 footer2_html 의 리베이트 문장
+// (연도·두 비율)뿐이고, 그 문장은 해마다 일곱 언어에서 손으로 다시 써야 한다. candidate 모드(update.yml 의 propose)에서는
+// 경고만 — PR 은 열리고 체크리스트가 고치라고 한다. strict(ci.yml, pin 뒤)에서는 실패다.
+const candidate = process.argv.includes('--candidate') || process.env.CANDIDATE === '1'
 
 const langs = Object.keys(ctx.STR)
 for (const lang of langs) {
@@ -48,6 +54,7 @@ for (const lang of langs) {
       ctx.render(p)
       const h = els.out.innerHTML
       for (const probe of probes) if (h.includes(probe)) { console.log(`  ✗ ${lang}/${label}: "${probe}" 발견 — ${D.s.names[p[F.name]]}`); bad++ }
+      for (const [re, what] of reProbes) if (re.test(h)) { console.log(`  ✗ ${lang}/${label}: ${what} 발견 (${re.exec(h)[0].trim()}) — ${D.s.names[p[F.name]]}`); bad++ }
       if (lang === 'en' && banned.test(h)) { console.log(`  ✗ ${lang}/${label}: 금지어`); bad++ }
       if (h.length < 400) { console.log(`  ✗ ${lang}/${label}: 출력이 너무 짧다 (${h.length})`); bad++ }
       if (!h.includes(riseYear)) { console.log(`  ✗ ${lang}/${label}: 인상 연도 ${riseYear} 가 없다`); bad++ }
@@ -60,6 +67,13 @@ for (const lang of langs) {
     if (/[{}]|undefined|Invalid Date/.test(v)) { console.log(`  ✗ ${lang}/${k}: ${v}`); bad++ }
     // built_html 의 날짜는 빌드 시각이라 인상 연도와 무관하다 (1월에 재빌드하면 해가 다르다)
     if ((k === 'eyebrow' || k === 'meta_desc') && !v.includes(riseYear)) { console.log(`  ✗ ${lang}/${k}: 인상 연도 ${riseYear} 가 없다 — ${v}`); bad++ }
+  }
+  for (const [k, v] of Object.entries(ctx.STR[lang])) {
+    const years = [...new Set(JSON.stringify(v).match(/(?<!\d)(?:19|20)\d{2}(?!\d)/g) ?? [])].filter(y => y !== riseYear)
+    if (years.length) {
+      console.log(`  ${candidate ? '!' : '✗'} ${lang}/${k}: 연도 ${years.join(', ')} 가 문구에 박혀 있다 (인상 연도 ${riseYear}) — 일곱 언어에서 문장을 다시 쓸 것${candidate ? ' (candidate 모드: 경고만)' : ''}`)
+      if (!candidate) bad++
+    }
   }
   console.log(`  ${lang}: ${n}건 렌더 OK`)
 }
@@ -105,7 +119,9 @@ if (hidden) bad++
   fresh.ctx.__S = { ...D, meta: { ...D.meta, schema: 999 } }
   let ok = true
   try { if (vm.runInContext('applyIndex(__S)', fresh.ctx) !== false) ok = false } catch (e) { console.log(`  ✗ stale: 예외 ${e.message}`); ok = false }
+  await settled()   // 새로고침은 스크립트 prefetch 뒤에 온다
   try { vm.runInContext('applyIndex(__S)', fresh.ctx) } catch (e) { console.log(`  ✗ stale 2회: 예외 ${e.message}`); ok = false }
+  await settled()
   const h = fresh.els.out.innerHTML
   if (!h.includes(fresh.ctx.STR.en.stale_html) || fresh.reloads.n !== 1 || /[{}]|undefined/.test(h)) ok = false
   if (reloads.n !== 0 || Object.keys(session).length) { console.log('  ✗ 정상 로드가 새로고침을 건드렸다'); ok = false }

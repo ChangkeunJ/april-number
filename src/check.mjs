@@ -81,7 +81,8 @@ export async function check({
     const block = { [String(RISE.riseYear)]: { hospital: result.hospital } }
     mkdirSync(reportsDir, { recursive: true })
     const file = join(reportsDir, `candidate-${RISE.riseYear}.json`)
-    writeFileSync(file, JSON.stringify({ generated: new Date().toISOString(), ...result, expected: block }, null, 2) + '\n')
+    // 생성 시각은 싣지 않는다: 같은 입력이면 같은 파일이 나와야 update.yml 이 "변경 없음" 을 알아본다 (시각은 커밋이 안다).
+    writeFileSync(file, JSON.stringify({ ...result, expected: block }, null, 2) + '\n')
     log(`\ncandidate (not verified) — paste into rise.json "expected" after checking against the raw XML:\n${JSON.stringify(block, null, 2)}\nwritten ${file}`)
     result.file = file
   } else {

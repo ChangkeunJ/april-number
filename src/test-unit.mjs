@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync, cpSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync, cpSync, symlinkSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
@@ -13,6 +13,13 @@ import vm from 'node:vm'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const FIX = join(ROOT, 'test', 'fixtures')
 const TMP = mkdtempSync(join(tmpdir(), 'april-unit-'))
+// 임시 디렉터리는 어떻게 끝나든 지운다: 아래 동적 import 가 문법 오류로 죽어도, 그룹 밖에서 예외가 나도, Ctrl-C 로 끊어도.
+process.on('exit', () => rmSync(TMP, { recursive: true, force: true }))
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(1))
+// 저장소의 reports/ 는 (있든 없든) 그대로여야 한다 — 자식 프로세스가 REPORTS_DIR 를 무시하면 여기서 드러난다.
+const treeStamp = (d) => (existsSync(d) ? readdirSync(d).sort().map(f => { const s = statSync(join(d, f)); return `${f}:${s.size}:${s.mtimeMs}` }).join('\n') : null)
+const REPO_REPORTS = join(ROOT, 'reports')
+const repoReportsBefore = treeStamp(REPO_REPORTS)
 const ENV = {
   RISE_FILE: join(FIX, 'rise.json'),
   DATA_DIR: join(FIX, 'data'),
@@ -154,7 +161,7 @@ await group('parse: fixture Hospital file', async () => {
   assert.ok(!weird.cover.includes('function'), 'no prototype leak in cover vector')
   const w = by('CCC-021').waits
   assert.equal(Object.getPrototypeOf(w), null)
-  assert.ok(Object.hasOwn(w, '__proto__')); assert.equal(w['__proto__'], '12M'); assert.equal(w.Accident, '1D')
+  assert.ok(Object.hasOwn(w, '__proto__')); assert.equal(w['__proto__'], '12m', 'Unit="Months" → lower-case m'); assert.equal(w.Accident, '1d')
   assert.equal(by('CCC-022').status, 'Closed')
   const corp = by('DDD-030')
   assert.equal(corp.corporate, true); assert.equal(corp.corporateText, 'Available to employees of Delta Pty Ltd & their families.')
@@ -222,7 +229,6 @@ await group('build: fixture stats equal the pinned expected block', async () => 
   assert.equal(D.funds.BBB, 'Beta & Gamma Health'); assert.equal(D.funds.CCC, 'Coastal Care <Mutual>')
   assert.equal(Object.keys(D.funds).length, 14)
   const F = columns.F
-  const row = (code, who) => D.products.find(p => D.s.names[p[F.name]].startsWith(code) ? false : (p[F.fund] === code.slice(0, 3) && D.s.names[p[F.name]] === who))
   const named = (name, whoSig = '1|1|', type = 0) => D.products.find(p => D.s.names[p[F.name]] === name && D.s.whos[p[F.who]] === whoSig && p[F.type] === type)
   assert.equal(named('Coastal Basic')[F.url], -1, 'javascript: url dropped')
   assert.equal(named('Coastal Gold Family', '2|0|Child,Student')[F.url], -1, 'non-url dropped')
@@ -241,12 +247,11 @@ await group('build: fixture stats equal the pinned expected block', async () => 
   const corp = named('Delta Corporate Gold')
   assert.equal(corp[F.corp], 1); assert.equal(D.s.corpText[corp[F.corpTxt]], 'Available to employees of Delta Pty Ltd & their families.')
   assert.equal(named('Delta Staff Silver', '2|0|')[F.restr], 1)
-  assert.ok(D.s.waits.some(w => JSON.parse(w).__proto__ === '12M'), 'waits table keeps __proto__ title')
+  assert.ok(D.s.waits.some(w => JSON.parse(w).__proto__ === '12m'), 'waits table keeps __proto__ title')
   assert.ok(D.s.covers.some(c => c.includes('?')))
   assert.ok(D.s.names.includes('Beta Basic &#99999999999; Edition'))
   assert.ok(!D.products.some(p => D.s.names[p[F.name]] === 'Coastal Closed Gold'), 'closed product excluded')
   assert.ok(!D.products.some(p => D.s.names[p[F.name]] === 'Alpha Retired Gold'), 'march-only product excluded')
-  void row
 })
 
 await group('build: meta.schema/version/built and version.js', async () => {
@@ -344,7 +349,12 @@ await group('check.mjs: strict, candidate and unverified modes', async () => {
   x = run('check.mjs', { env: { RISE_FILE: noExp }, args: ['--candidate'] })
   assert.equal(x.code, 0, x.stderr); assert.match(x.stdout, /candidate \(not verified\)/)
   assert.ok(existsSync(join(TMP, 'reports-cli', 'candidate-2026.json')), 'REPORTS_DIR honoured')
-  assert.ok(!existsSync(join(ROOT, 'reports', 'candidate-2026.json')), 'fixture run must not write into the repo')
+  assert.equal(treeStamp(REPO_REPORTS), repoReportsBefore, 'fixture run must not write into the repo (reports/ unchanged, whether or not it exists)')
+  // 같은 입력이면 같은 파일: 생성 시각을 싣지 않는다 (update.yml 의 "변경 없음 → 커밋 없음" 판정이 이것에 기댄다)
+  const cand = readFileSync(join(TMP, 'reports-cli', 'candidate-2026.json'), 'utf8')
+  assert.ok(!/generated/.test(cand), 'candidate json carries no timestamp')
+  x = run('check.mjs', { env: { RISE_FILE: noExp }, args: ['--candidate'] })
+  assert.equal(x.code, 0, x.stderr); assert.equal(readFileSync(join(TMP, 'reports-cli', 'candidate-2026.json'), 'utf8'), cand, 'byte-identical on a second run')
   const drift = join(TMP, 'drift')
   cpSync(join(FIX, 'data'), drift, { recursive: true })
   const f = join(drift, 'april-2026', 'Hospital Open 05-Apr-2026.xml')
@@ -369,6 +379,12 @@ await group('fetch: extractSnapshot allowlist, duplicates and limits', async () 
   }
   await assert.rejects(extractSnapshot(join(FIX, 'dup.zip'), join(TMP, 'x-dup')), /exactly one "Hospital Open DD-Mon-YYYY\.xml", found 2/)
   assert.ok(!existsSync(join(TMP, 'x-dup')), 'nothing extracted on refusal')
+  // 옵션 주입: 멤버 이름이 "-dINJECTED/…" 로 시작한다 (unzip 은 이를 -d 옵션으로 읽는다). 추출 전에 거부하고 아무것도 만들지 않는다.
+  await assert.rejects(extractSnapshot(join(FIX, 'dashd.zip'), join(TMP, 'x-dashd')), /"-dINJECTED\/Hospital Open 05-Apr-2026\.xml" starts with "-"/)
+  for (const d of [join(TMP, 'x-dashd'), join(process.cwd(), 'INJECTED'), join(TMP, 'INJECTED'), join(ROOT, 'INJECTED')]) assert.ok(!existsSync(d), `option injection wrote ${d}`)
+  // 심링크 항목: unzip 은 Funds 멤버를 /etc/hostname 으로 가는 심링크로 복원한다. lstat 이 잡아 거부하고 디렉터리를 치운다.
+  await assert.rejects(extractSnapshot(join(FIX, 'symlink.zip'), join(TMP, 'x-sym')), /"Funds 05-Apr-2026\.xml" is not a regular file/)
+  assert.ok(!existsSync(join(TMP, 'x-sym')), 'symlink: directory removed, nothing left to follow')
   await assert.rejects(extractSnapshot(join(FIX, 'snapshot.zip'), join(TMP, 'x2'), { limits: { ...LIMITS, memberBytes: 10 } }), /declares \d+ bytes, limit 10/)
   await assert.rejects(extractSnapshot(join(FIX, 'snapshot.zip'), join(TMP, 'x2'), { limits: { ...LIMITS, entries: 2 } }), /5 entries, limit 2/)
   await assert.rejects(extractSnapshot(join(FIX, 'snapshot.zip'), join(TMP, 'x2'), { limits: { ...LIMITS, totalBytes: 1000 } }), /in total, limit 1000/)
@@ -390,6 +406,11 @@ await group('fetch: verifySnapshot against a manifest', async () => {
   buf[buf.length - 3] ^= 0x01; writeFileSync(f, buf)
   assert.equal(await verifySnapshot('April 2026', { manifest, dataDir }), false, 'one flipped bit')
   copyFileSync(join(APR, 'Funds 05-Apr-2026.xml'), f)
+  assert.equal(await verifySnapshot('April 2026', { manifest, dataDir }), true)
+  // 심링크로 바뀐 멤버는 크기·해시가 링크 대상과 맞아도 거부한다 (stat/hash 는 링크를 따라가지만 lstat 은 아니다)
+  rmSync(f); symlinkSync(join(APR, 'Funds 05-Apr-2026.xml'), f)
+  assert.equal(await verifySnapshot('April 2026', { manifest, dataDir }), false, 'symlink member is not a regular file')
+  rmSync(f); copyFileSync(join(APR, 'Funds 05-Apr-2026.xml'), f)
   assert.equal(await verifySnapshot('April 2026', { manifest, dataDir }), true)
   writeFileSync(join(dir, 'Hospital Open 01-Apr-2026.xml'), 'stale')
   assert.equal(await verifySnapshot('April 2026', { manifest, dataDir }), false, 'stray member-shaped file forces re-extraction')
@@ -531,7 +552,26 @@ await group('fetch: fetchAll end to end with a mocked CKAN (manifest, verified s
   assert.equal((await hashFile(join(APR, 'Funds 05-Apr-2026.xml'))).sha256, sha256(readFileSync(join(APR, 'Funds 05-Apr-2026.xml'))))
 })
 
-// ---- 사이트 검사 스크립트 (자식 프로세스) ----
+// ---- 사이트 검사 스크립트 ----
+await group('strings-check: rejects case-folded or duplicate attributes, handlers, foreign hosts and leaked tags', async () => {
+  const { checkStrings, loadStrings } = await import('./strings-check.mjs')
+  const base = loadStrings(join(ROOT, 'site', 'strings.js'))
+  assert.doesNotThrow(() => checkStrings(structuredClone(base)))
+  const rejects = (mut, re) => { const S = structuredClone(base); mut(S); assert.throws(() => checkStrings(S), re) }
+  const GH = 'https://github.com/ChangkeunJ/april-number'
+  rejects(S => { S.ko.footer_source_html = `<a HREF="https://evil.example" href="${GH}">x</a>.` }, /evil\.example/)        // 브라우저는 첫 href(대문자)를 쓴다
+  rejects(S => { S.ko.footer_source_html = `<a href="${GH}" href="${GH}">x</a>.` }, /href= 이 두 번/)
+  rejects(S => { S.ko.footer_source_html = `<a href="${GH}"/onclick=alert(1)>x</a>.` }, /on\*= 핸들러/)
+  rejects(S => { S.ko.footer_source_html = `<a href="${GH}" referrerpolicy="unsafe-url" ping="https://evil.example/p">x</a>.` }, /허용되지 않은 속성 (referrerpolicy|ping)=/)
+  rejects(S => { S.ko.dek_html = S.ko.dek_html.replace('<em>', '<em id="fund">') }, /<em> 에 허용되지 않은 속성 id=/)
+  rejects(S => { S.ko.footer_source_html = `<a href=${GH}>x</a>.` }, /name="value"/)
+  rejects(S => { for (const l of Object.keys(S)) S[l].footer_source_html = '<a href="http://github.com/ChangkeunJ/april-number">x</a>.' }, /https 이고/)
+  rejects(S => { for (const l of Object.keys(S)) S[l].footer_source_html = '<a href="https://evil.example/">x</a>.' }, /https 이고/)
+  rejects(S => { for (const l of Object.keys(S)) S[l].footer_source_html = '<a href="https://github.com.evil.example/">x</a>.' }, /https 이고/)
+  rejects(S => { S.ko.footer_source_html = S.ko.footer_source_html.replace('</a>', '</a><b>!</b>') }, /태그 불일치/)
+  rejects(S => { S.ko.footer_source_html = `<a href="https://privatehealth.gov.au/">x</a>.` }, /href 불일치/)   // 허용 호스트라도 영어와 같아야 한다
+  rejects(S => { S.ko.yours = '<b>x</b>' }, /_html 키가 아닌데/)
+})
 await group('site: csp-check (inline hashes, no style=/on*=/javascript:)', () => {
   const r = run('csp-check.mjs', { cwd: ROOT })
   assert.equal(r.code, 0, r.stderr); assert.match(r.stdout, /csp-check OK/)
@@ -553,6 +593,6 @@ await group('site: smoke over the fixture build (index.json + version.js + the r
   assert.equal(r.code, 0, r.stdout + r.stderr); assert.match(r.stdout, /OK — 7개 언어/); assert.match(r.stdout, /stale 분기: OK/)
 })
 
-rmSync(TMP, { recursive: true, force: true })
+// TMP 는 process.on('exit') 가 지운다 (위).
 if (failed) { console.log(`\n${failed} group(s) failed`); process.exit(1) }
 console.log('\nOK — unit tests passed on fixtures (no network)')
