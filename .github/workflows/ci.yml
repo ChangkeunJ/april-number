@@ -1,27 +1,80 @@
+# 액션은 전부 commit SHA로 고정한다. 뒤의 "# vX.Y.Z" 주석은 사람이 읽기 위한 것이며 Dependabot이 SHA와 함께 갱신한다.
 name: ci
 on:
   push:
     branches: [master]
   pull_request:
 
-permissions:
-  contents: read
+# 기본 권한은 없음. 각 job이 필요한 만큼만 선언한다.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # 네트워크 없이 픽스처로 도는 빠른 검사 (push/PR마다)
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: npm run test:unit
+
+  # 실데이터 전체 파이프라인: fetch → check → build → test → smoke
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      - uses: actions/cache@v4
+      # 캐시 키는 스냅샷 매니페스트. fetch가 복원된 파일의 sha256을 재검증하므로
+      # 부분 일치(restore-keys)로 낡은 캐시를 받아도 안전하다.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: data
-          key: privatehealth-${{ hashFiles('src/fetch.mjs') }}
+          key: privatehealth-${{ hashFiles('snapshots.json') }}
+          restore-keys: |
+            privatehealth-
       - run: npm run fetch
       - run: npm run check
       - run: npm run build
       - run: npm test
       - run: node src/smoke.mjs
+      # master push에서만: 검증을 통과한 바로 그 site/를 Pages artifact로 올린다.
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  # 같은 run에서 올린 artifact만 배포한다. checkout·fetch 없음.
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
